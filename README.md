@@ -11,7 +11,7 @@ Decode / parse CAN frames into messages/signals in a fast and easy way.
 fn main() {
     env_logger::init();
 
-    let parser = match can_decode::Parser::from_dbc_file(&args.vcan_dbc) {
+    let parser = match can_decode::Parser::from_dbc_file(Path::new("./CAN.dbc")) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("Error parsing DBC file: {}", e);
