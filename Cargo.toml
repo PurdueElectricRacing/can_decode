@@ -1,6 +1,6 @@
 [package]
 name = "can_decode"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 authors = ["Millan Kumar <millankumar@gmail.com>", "Purdue Electric Racing"]
 description = "Decode / parse CAN frames into messages/signals in a fast and easy way."
