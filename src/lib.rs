@@ -26,6 +26,12 @@ impl Parser {
         }
     }
 
+    pub fn from_dbc_file(path: &std::path::Path) -> Result<Self, Box<dyn std::error::Error>> {
+        let mut parser = Self::new();
+        parser.add_from_dbc_file(path)?;
+        Ok(parser)
+    }
+
     pub fn add_from_slice(&mut self, buffer: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
         let dbc = can_dbc::DBC::from_slice(buffer).map_err(|e| {
             log::error!("Failed to parse DBC: {:?}", e);
