@@ -16,13 +16,13 @@ pub struct DecodedSignal {
 }
 
 pub struct Parser {
-    message_defs: std::collections::HashMap<IdType, can_dbc::Message>,
+    msg_defs: std::collections::HashMap<IdType, can_dbc::Message>,
 }
 
 impl Parser {
     pub fn new() -> Self {
         Self {
-            message_defs: std::collections::HashMap::new(),
+            msg_defs: std::collections::HashMap::new(),
         }
     }
 
@@ -37,18 +37,18 @@ impl Parser {
             log::error!("Failed to parse DBC: {:?}", e);
             format!("{:?}", e)
         })?;
-        for message in dbc.messages() {
-            let msg_id = match message.message_id() {
+        for msg_def in dbc.messages() {
+            let msg_id = match msg_def.message_id() {
                 can_dbc::MessageId::Standard(id) => *id as u32,
                 can_dbc::MessageId::Extended(id) => *id,
             };
-            if self.message_defs.contains_key(&msg_id) {
+            if self.msg_defs.contains_key(&msg_id) {
                 log::warn!(
                     "Duplicate message ID {msg_id:#X} ({}). Overwriting existing definition.",
-                    message.message_name()
+                    msg_def.message_name()
                 );
             }
-            self.message_defs.insert(msg_id, message.clone());
+            self.msg_defs.insert(msg_id, msg_def.clone());
         }
         Ok(())
     }
@@ -68,7 +68,7 @@ impl Parser {
     pub fn decode_msg(&self, msg_id: IdType, data: &[u8]) -> Option<DecodedMessage> {
         // Grab msg metadata and then for every signal in the message, decode it and add
         // to the decoded message
-        let msg_def = self.message_defs.get(&msg_id)?;
+        let msg_def = self.msg_defs.get(&msg_id)?;
         let msg_name = msg_def.message_name().to_string();
         let is_extended = matches!(msg_def.message_id(), can_dbc::MessageId::Extended(_));
         let mut decoded_signals = std::collections::HashMap::new();
@@ -182,9 +182,8 @@ impl Parser {
                     let byte_idx = bit_pos / 8;
                     let bit_idx = 7 - (bit_pos % 8);
 
-                    if byte_idx < data.len() {
-                        let bit_val = (data[byte_idx] >> bit_idx) & 1;
-                        result = (result << 1) | (bit_val as u64);
+                    if byte_idx >= data.len() {
+                        break;
                     }
 
                     let bit_val = (data[byte_idx] >> bit_idx) & 1;
@@ -199,8 +198,16 @@ impl Parser {
     }
 
     pub fn signals_for_msg(&self, msg_id: IdType) -> Option<Vec<can_dbc::Signal>> {
-        let msg_def = self.message_defs.get(&msg_id)?;
+        let msg_def = self.msg_defs.get(&msg_id)?;
         Some(msg_def.signals().to_vec())
+    }
+
+    pub fn msg_defs(&self) -> Vec<can_dbc::Message> {
+        self.msg_defs.values().cloned().collect()
+    }
+
+    pub fn clear(&mut self) {
+        self.msg_defs.clear();
     }
 }
 
