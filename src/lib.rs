@@ -136,7 +136,12 @@ impl Parser {
         size: usize,
         byte_order: can_dbc::ByteOrder,
     ) -> Option<u64> {
-        if data.len() < 8 {
+        if data.is_empty() || size == 0 {
+            return None;
+        }
+
+        let total_bits = data.len() * 8;
+        if start_bit + size > total_bits {
             return None;
         }
 
@@ -154,7 +159,7 @@ impl Parser {
                 while remaining_bits > 0 && current_byte < data.len() {
                     let bits_in_this_byte = std::cmp::min(remaining_bits, 8 - bit_offset);
                     let mask = ((1u64 << bits_in_this_byte) - 1) << bit_offset;
-                    let byte_value = (data[current_byte] as u64 & mask) >> bit_offset;
+                    let byte_value = ((data[current_byte] as u64) & mask) >> bit_offset;
 
                     result |= byte_value << (size - remaining_bits);
 
@@ -169,12 +174,15 @@ impl Parser {
 
                 for _ in 0..size {
                     let byte_idx = bit_pos / 8;
-                    let bit_idx = 7 - (bit_pos % 8); // MSB first
+                    let bit_idx = 7 - (bit_pos % 8);
 
                     if byte_idx < data.len() {
                         let bit_val = (data[byte_idx] >> bit_idx) & 1;
                         result = (result << 1) | (bit_val as u64);
                     }
+
+                    let bit_val = (data[byte_idx] >> bit_idx) & 1;
+                    result = (result << 1) | (bit_val as u64);
 
                     bit_pos += 1;
                 }
