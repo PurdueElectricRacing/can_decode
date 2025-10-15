@@ -2,8 +2,8 @@
 
 Decode / parse CAN frames into messages/signals in a fast and easy way.
 
-<!-- [![Crates.io](https://img.shields.io/crates/v/can_decode.svg)](https://crates.io/crates/can_decode)
-[![Docs.rs](https://docs.rs/can_decode/badge.svg)](https://docs.rs/can_decode) -->
+[![Crates.io](https://img.shields.io/crates/v/can_decode.svg)](https://crates.io/crates/can_decode)
+[![Docs.rs](https://docs.rs/can_decode/badge.svg)](https://docs.rs/can_decode)
 
 ## Example
 
