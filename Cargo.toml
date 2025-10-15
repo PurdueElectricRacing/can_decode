@@ -3,12 +3,13 @@ name = "can_decode"
 version = "0.1.0"
 edition = "2024"
 authors = ["Millan Kumar <millankumar@gmail.com>", "Purdue Electric Racing"]
-description = "Decode CAN frames into Signals"
+description = "Decode / parse CAN frames into messages/signals in a fast and easy way."
 license = "MIT"
 readme = "./README.md"
 repository = "https://github.com/PurdueElectricRacing/can_decode"
 homepage = "https://github.com/PurdueElectricRacing/can_decode"
-keywords = ["CAN", "parse", "decode", "unpack", "dbc"]
+keywords = ["CAN", "parse", "decode", "ecu", "dbc"]
+categories = ["embedded", "automotive", "encoding", "parsing", "protocol"]
 
 [dependencies]
 can-dbc = "6.0.0"
