@@ -426,7 +426,7 @@
 <a href=#426 id=426 data-nosnippet>426</a>    /// # fn main() -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
 <a href=#427 id=427 data-nosnippet>427</a>    /// let parser = Parser::from_dbc_file(Path::new("my_database.dbc"))?;
 <a href=#428 id=428 data-nosnippet>428</a>    ///
-<a href=#429 id=429 data-nosnippet>429</a>    /// if let Some(signals) = parser.signals_for_msg(0x123) {
+<a href=#429 id=429 data-nosnippet>429</a>    /// if let Some(signals) = parser.signal_defs_for_msg(0x123) {
 <a href=#430 id=430 data-nosnippet>430</a>    ///     for signal in signals {
 <a href=#431 id=431 data-nosnippet>431</a>    ///         println!("Signal: {}", signal.name());
 <a href=#432 id=432 data-nosnippet>432</a>    ///     }
@@ -434,7 +434,7 @@
 <a href=#434 id=434 data-nosnippet>434</a>    /// # Ok(())
 <a href=#435 id=435 data-nosnippet>435</a>    /// # }
 <a href=#436 id=436 data-nosnippet>436</a>    /// ```
-<a href=#437 id=437 data-nosnippet>437</a>    </span><span class="kw">pub fn </span>signals_for_msg(<span class="kw-2">&amp;</span><span class="self">self</span>, msg_id: u32) -&gt; <span class="prelude-ty">Option</span>&lt;Vec&lt;can_dbc::Signal&gt;&gt; {
+<a href=#437 id=437 data-nosnippet>437</a>    </span><span class="kw">pub fn </span>signal_defs_for_msg(<span class="kw-2">&amp;</span><span class="self">self</span>, msg_id: u32) -&gt; <span class="prelude-ty">Option</span>&lt;Vec&lt;can_dbc::Signal&gt;&gt; {
 <a href=#438 id=438 data-nosnippet>438</a>        <span class="kw">let </span>msg_def = <span class="self">self</span>.msg_defs.get(<span class="kw-2">&amp;</span>msg_id)<span class="question-mark">?</span>;
 <a href=#439 id=439 data-nosnippet>439</a>        <span class="prelude-val">Some</span>(msg_def.signals().to_vec())
 <a href=#440 id=440 data-nosnippet>440</a>    }
