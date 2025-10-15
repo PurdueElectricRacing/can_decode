@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["DecodedMessage","DecodedSignal","Parser"],"type":["IdType"]};
+window.SIDEBAR_ITEMS = {"struct":["DecodedMessage","DecodedSignal","Parser"]};
