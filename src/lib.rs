@@ -35,9 +35,6 @@
 //! # }
 //! ```
 
-/// Type alias for CAN message identifiers.
-pub type IdType = u32;
-
 /// A decoded CAN message containing signal values.
 ///
 /// This structure represents a fully decoded CAN message with all its signals
@@ -47,7 +44,7 @@ pub struct DecodedMessage {
     /// The name of the message as defined in the DBC file
     pub name: String,
     /// The CAN message ID
-    pub msg_id: IdType,
+    pub msg_id: u32,
     /// Whether this is an extended (29-bit) CAN ID
     pub is_extended: bool,
     /// Map of signal names to their decoded values
@@ -92,7 +89,8 @@ pub struct DecodedSignal {
 /// # }
 /// ```
 pub struct Parser {
-    msg_defs: std::collections::HashMap<IdType, can_dbc::Message>,
+    /// Map of message ID to message definitions
+    msg_defs: std::collections::HashMap<u32, can_dbc::Message>,
 }
 
 impl Parser {
@@ -269,7 +267,7 @@ impl Parser {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn decode_msg(&self, msg_id: IdType, data: &[u8]) -> Option<DecodedMessage> {
+    pub fn decode_msg(&self, msg_id: u32, data: &[u8]) -> Option<DecodedMessage> {
         // Grab msg metadata and then for every signal in the message, decode it and add
         // to the decoded message
         let msg_def = self.msg_defs.get(&msg_id)?;
@@ -436,7 +434,7 @@ impl Parser {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn signals_for_msg(&self, msg_id: IdType) -> Option<Vec<can_dbc::Signal>> {
+    pub fn signals_for_msg(&self, msg_id: u32) -> Option<Vec<can_dbc::Signal>> {
         let msg_def = self.msg_defs.get(&msg_id)?;
         Some(msg_def.signals().to_vec())
     }
@@ -458,7 +456,7 @@ impl Parser {
     /// let parser = Parser::from_dbc_file(Path::new("my_database.dbc"))?;
     ///
     /// for msg in parser.msg_defs() {
-    ///     println!("Message: {} (ID: {:#X})", msg.message_name(), 
+    ///     println!("Message: {} (ID: {:#X})", msg.message_name(),
     ///              match msg.message_id() {
     ///                  can_dbc::MessageId::Standard(id) => *id as u32,
     ///                  can_dbc::MessageId::Extended(id) => *id,
