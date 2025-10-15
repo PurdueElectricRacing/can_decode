@@ -426,7 +426,7 @@ impl Parser {
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let parser = Parser::from_dbc_file(Path::new("my_database.dbc"))?;
     ///
-    /// if let Some(signals) = parser.signals_for_msg(0x123) {
+    /// if let Some(signals) = parser.signal_defs_for_msg(0x123) {
     ///     for signal in signals {
     ///         println!("Signal: {}", signal.name());
     ///     }
@@ -434,7 +434,7 @@ impl Parser {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn signals_for_msg(&self, msg_id: u32) -> Option<Vec<can_dbc::Signal>> {
+    pub fn signal_defs_for_msg(&self, msg_id: u32) -> Option<Vec<can_dbc::Signal>> {
         let msg_def = self.msg_defs.get(&msg_id)?;
         Some(msg_def.signals().to_vec())
     }
