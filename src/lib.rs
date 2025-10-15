@@ -35,7 +35,6 @@
 //! # }
 //! ```
 
-
 /// A decoded CAN message containing signal values.
 ///
 /// This structure represents a fully decoded CAN message with all its signals
@@ -457,7 +456,7 @@ impl Parser {
     /// let parser = Parser::from_dbc_file(Path::new("my_database.dbc"))?;
     ///
     /// for msg in parser.msg_defs() {
-    ///     println!("Message: {} (ID: {:#X})", msg.message_name(), 
+    ///     println!("Message: {} (ID: {:#X})", msg.message_name(),
     ///              match msg.message_id() {
     ///                  can_dbc::MessageId::Standard(id) => *id as u32,
     ///                  can_dbc::MessageId::Extended(id) => *id,
