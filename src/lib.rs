@@ -269,27 +269,26 @@ impl Parser {
         // Grab msg metadata and then for every signal in the message, decode it and add
         // to the decoded message
         let msg_def = self.msg_defs.get(&msg_id)?;
-        let msg_name = msg_def.message_name().to_string();
-        let is_extended = matches!(msg_def.message_id(), can_dbc::MessageId::Extended(_));
+        let is_extended = matches!(msg_def.id, can_dbc::MessageId::Extended(_));
         let mut decoded_signals = std::collections::HashMap::new();
 
-        for signal_def in msg_def.signals() {
-            match self.decode_signal(signal_def, data) {
+        for signal_def in &msg_def.signals {
+            match self.decode_signal(&signal_def, data) {
                 Some(decoded_signal) => {
                     decoded_signals.insert(decoded_signal.name.to_string(), decoded_signal);
                 }
                 None => {
                     log::warn!(
                         "Failed to decode signal {} from message {}",
-                        signal_def.name(),
-                        msg_name
+                        signal_def.name,
+                        msg_def.name
                     );
                 }
             }
         }
 
         Some(DecodedMessage {
-            name: msg_name,
+            name: msg_def.name.clone(),
             msg_id,
             is_extended,
             signals: decoded_signals,
