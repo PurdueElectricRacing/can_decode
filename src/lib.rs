@@ -142,15 +142,15 @@ impl Parser {
         Ok(parser)
     }
 
-    /// Adds message definitions from a DBC file buffer.
+    /// Adds message definitions from a DBC file string.
     ///
-    /// This method parses DBC content from a byte slice and adds all message
+    /// This method parses DBC content from a string slice and adds all message
     /// definitions to the parser. If a message ID already exists, it will be
     /// overwritten and a warning will be logged.
     ///
     /// # Arguments
     ///
-    /// * `buffer` - Byte slice containing DBC file content
+    /// * `buffer` - String slice containing the full DBC file contents
     ///
     /// # Errors
     ///
@@ -162,26 +162,26 @@ impl Parser {
     /// use can_decode::Parser;
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let dbc_content = b"VERSION \"\"..."; // DBC file content
+    /// let dbc_content = "VERSION \"\"..."; // DBC file content as &str
     /// let mut parser = Parser::new();
-    /// parser.add_from_slice(dbc_content)?;
+    /// parser.add_from_str(dbc_content)?;
     /// # Ok(())
     /// # }
     /// ```
-    pub fn add_from_slice(&mut self, buffer: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
-        let dbc = can_dbc::DBC::from_slice(buffer).map_err(|e| {
+    pub fn add_from_str(&mut self, buffer: &str) -> Result<(), Box<dyn std::error::Error>> {
+        let dbc = can_dbc::Dbc::try_from(buffer).map_err(|e| {
             log::error!("Failed to parse DBC: {:?}", e);
             format!("{:?}", e)
         })?;
-        for msg_def in dbc.messages() {
-            let msg_id = match msg_def.message_id() {
-                can_dbc::MessageId::Standard(id) => *id as u32,
-                can_dbc::MessageId::Extended(id) => *id,
+        for msg_def in dbc.messages {
+            let msg_id = match msg_def.id {
+                can_dbc::MessageId::Standard(id) => id as u32,
+                can_dbc::MessageId::Extended(id) => id,
             };
             if self.msg_defs.contains_key(&msg_id) {
                 log::warn!(
                     "Duplicate message ID {msg_id:#X} ({}). Overwriting existing definition.",
-                    msg_def.message_name()
+                    msg_def.name
                 );
             }
             self.msg_defs.insert(msg_id, msg_def.clone());
@@ -220,11 +220,9 @@ impl Parser {
         &mut self,
         path: &std::path::Path,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let mut f = std::fs::File::open(path)?;
-        let mut buffer = Vec::new();
-        std::io::Read::read_to_end(&mut f, &mut buffer)?;
-        self.add_from_slice(&buffer)
-            .map_err(|e| format!("{:?}", e))?;
+        let buffer = std::fs::read(path)?;
+        let s = String::from_utf8(buffer)?;
+        self.add_from_str(&s)?;
         Ok(())
     }
 
