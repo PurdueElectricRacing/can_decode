@@ -273,7 +273,7 @@ impl Parser {
         let mut decoded_signals = std::collections::HashMap::new();
 
         for signal_def in &msg_def.signals {
-            match self.decode_signal(&signal_def, data) {
+            match self.decode_signal(signal_def, data) {
                 Some(decoded_signal) => {
                     decoded_signals.insert(decoded_signal.name.to_string(), decoded_signal);
                 }
@@ -300,23 +300,19 @@ impl Parser {
     /// Extracts the raw bits for a signal, converts to signed/unsigned as needed,
     /// and applies the scaling factor and offset to produce the physical value.
     fn decode_signal(&self, signal_def: &can_dbc::Signal, data: &[u8]) -> Option<DecodedSignal> {
-        // Get signal properties
-        let start_bit = *signal_def.start_bit() as usize;
-        let signal_size = *signal_def.signal_size() as usize;
-        let byte_order = signal_def.byte_order();
-        let value_type = signal_def.value_type();
-        let factor = signal_def.factor();
-        let offset = signal_def.offset();
-        let unit = signal_def.unit();
-
         // Extract raw value based on byte order and signal properties
-        let raw_value = self.extract_signal_value(data, start_bit, signal_size, *byte_order)?;
+        let raw_value = self.extract_signal_value(
+            data,
+            signal_def.start_bit as usize,
+            signal_def.size as usize,
+            signal_def.byte_order,
+        )?;
 
         // Convert to signed if needed
-        let raw_value = if *value_type == can_dbc::ValueType::Signed {
+        let raw_value = if signal_def.value_type == can_dbc::ValueType::Signed {
             // Convert to signed based on signal size
-            let max_unsigned = (1u64 << signal_size) - 1;
-            let sign_bit = 1u64 << (signal_size - 1);
+            let max_unsigned = (1u64 << signal_def.size) - 1;
+            let sign_bit = 1u64 << (signal_def.size - 1);
 
             if raw_value & sign_bit != 0 {
                 // Negative number - extend sign
@@ -329,12 +325,12 @@ impl Parser {
         };
 
         // Apply scaling
-        let scaled_value = raw_value * factor + offset;
+        let scaled_value = raw_value * signal_def.factor + signal_def.offset;
 
         Some(DecodedSignal {
-            name: signal_def.name().to_string(),
+            name: signal_def.name.clone(),
             value: scaled_value,
-            unit: unit.to_string(),
+            unit: signal_def.unit.clone(),
         })
     }
 
