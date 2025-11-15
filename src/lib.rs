@@ -429,7 +429,7 @@ impl Parser {
     /// ```
     pub fn signal_defs_for_msg(&self, msg_id: u32) -> Option<Vec<can_dbc::Signal>> {
         let msg_def = self.msg_defs.get(&msg_id)?;
-        Some(msg_def.signals().to_vec())
+        Some(msg_def.signals.to_vec())
     }
 
     /// Returns all loaded message definitions.
