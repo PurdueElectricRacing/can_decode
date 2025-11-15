@@ -142,15 +142,15 @@ impl Parser {
         Ok(parser)
     }
 
-    /// Adds message definitions from a DBC file buffer.
+    /// Adds message definitions from a DBC file string.
     ///
-    /// This method parses DBC content from a byte slice and adds all message
+    /// This method parses DBC content from a string slice and adds all message
     /// definitions to the parser. If a message ID already exists, it will be
     /// overwritten and a warning will be logged.
     ///
     /// # Arguments
     ///
-    /// * `buffer` - Byte slice containing DBC file content
+    /// * `buffer` - String slice containing the full DBC file contents
     ///
     /// # Errors
     ///
@@ -162,26 +162,26 @@ impl Parser {
     /// use can_decode::Parser;
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let dbc_content = b"VERSION \"\"..."; // DBC file content
+    /// let dbc_content = "VERSION \"\"..."; // DBC file content as &str
     /// let mut parser = Parser::new();
-    /// parser.add_from_slice(dbc_content)?;
+    /// parser.add_from_str(dbc_content)?;
     /// # Ok(())
     /// # }
     /// ```
-    pub fn add_from_slice(&mut self, buffer: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
-        let dbc = can_dbc::DBC::from_slice(buffer).map_err(|e| {
+    pub fn add_from_str(&mut self, buffer: &str) -> Result<(), Box<dyn std::error::Error>> {
+        let dbc = can_dbc::Dbc::try_from(buffer).map_err(|e| {
             log::error!("Failed to parse DBC: {:?}", e);
             format!("{:?}", e)
         })?;
-        for msg_def in dbc.messages() {
-            let msg_id = match msg_def.message_id() {
-                can_dbc::MessageId::Standard(id) => *id as u32,
-                can_dbc::MessageId::Extended(id) => *id,
+        for msg_def in dbc.messages {
+            let msg_id = match msg_def.id {
+                can_dbc::MessageId::Standard(id) => id as u32,
+                can_dbc::MessageId::Extended(id) => id,
             };
             if self.msg_defs.contains_key(&msg_id) {
                 log::warn!(
                     "Duplicate message ID {msg_id:#X} ({}). Overwriting existing definition.",
-                    msg_def.message_name()
+                    msg_def.name
                 );
             }
             self.msg_defs.insert(msg_id, msg_def.clone());
@@ -220,11 +220,9 @@ impl Parser {
         &mut self,
         path: &std::path::Path,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let mut f = std::fs::File::open(path)?;
-        let mut buffer = Vec::new();
-        std::io::Read::read_to_end(&mut f, &mut buffer)?;
-        self.add_from_slice(&buffer)
-            .map_err(|e| format!("{:?}", e))?;
+        let buffer = std::fs::read(path)?;
+        let s = String::from_utf8(buffer)?;
+        self.add_from_str(&s)?;
         Ok(())
     }
 
@@ -271,11 +269,10 @@ impl Parser {
         // Grab msg metadata and then for every signal in the message, decode it and add
         // to the decoded message
         let msg_def = self.msg_defs.get(&msg_id)?;
-        let msg_name = msg_def.message_name().to_string();
-        let is_extended = matches!(msg_def.message_id(), can_dbc::MessageId::Extended(_));
+        let is_extended = matches!(msg_def.id, can_dbc::MessageId::Extended(_));
         let mut decoded_signals = std::collections::HashMap::new();
 
-        for signal_def in msg_def.signals() {
+        for signal_def in &msg_def.signals {
             match self.decode_signal(signal_def, data) {
                 Some(decoded_signal) => {
                     decoded_signals.insert(decoded_signal.name.to_string(), decoded_signal);
@@ -283,15 +280,15 @@ impl Parser {
                 None => {
                     log::warn!(
                         "Failed to decode signal {} from message {}",
-                        signal_def.name(),
-                        msg_name
+                        signal_def.name,
+                        msg_def.name
                     );
                 }
             }
         }
 
         Some(DecodedMessage {
-            name: msg_name,
+            name: msg_def.name.clone(),
             msg_id,
             is_extended,
             signals: decoded_signals,
@@ -303,23 +300,19 @@ impl Parser {
     /// Extracts the raw bits for a signal, converts to signed/unsigned as needed,
     /// and applies the scaling factor and offset to produce the physical value.
     fn decode_signal(&self, signal_def: &can_dbc::Signal, data: &[u8]) -> Option<DecodedSignal> {
-        // Get signal properties
-        let start_bit = *signal_def.start_bit() as usize;
-        let signal_size = *signal_def.signal_size() as usize;
-        let byte_order = signal_def.byte_order();
-        let value_type = signal_def.value_type();
-        let factor = signal_def.factor();
-        let offset = signal_def.offset();
-        let unit = signal_def.unit();
-
         // Extract raw value based on byte order and signal properties
-        let raw_value = self.extract_signal_value(data, start_bit, signal_size, *byte_order)?;
+        let raw_value = self.extract_signal_value(
+            data,
+            signal_def.start_bit as usize,
+            signal_def.size as usize,
+            signal_def.byte_order,
+        )?;
 
         // Convert to signed if needed
-        let raw_value = if *value_type == can_dbc::ValueType::Signed {
+        let raw_value = if signal_def.value_type == can_dbc::ValueType::Signed {
             // Convert to signed based on signal size
-            let max_unsigned = (1u64 << signal_size) - 1;
-            let sign_bit = 1u64 << (signal_size - 1);
+            let max_unsigned = (1u64 << signal_def.size) - 1;
+            let sign_bit = 1u64 << (signal_def.size - 1);
 
             if raw_value & sign_bit != 0 {
                 // Negative number - extend sign
@@ -332,12 +325,12 @@ impl Parser {
         };
 
         // Apply scaling
-        let scaled_value = raw_value * factor + offset;
+        let scaled_value = raw_value * signal_def.factor + signal_def.offset;
 
         Some(DecodedSignal {
-            name: signal_def.name().to_string(),
+            name: signal_def.name.clone(),
             value: scaled_value,
-            unit: unit.to_string(),
+            unit: signal_def.unit.clone(),
         })
     }
 
@@ -436,7 +429,7 @@ impl Parser {
     /// ```
     pub fn signal_defs_for_msg(&self, msg_id: u32) -> Option<Vec<can_dbc::Signal>> {
         let msg_def = self.msg_defs.get(&msg_id)?;
-        Some(msg_def.signals().to_vec())
+        Some(msg_def.signals.to_vec())
     }
 
     /// Returns all loaded message definitions.
