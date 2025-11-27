@@ -462,6 +462,32 @@ impl Parser {
         self.msg_defs.values().cloned().collect()
     }
 
+    /// Returns the message definition for a given message ID.
+    ///
+    /// # Arguments
+    ///
+    /// * `msg_id` - The CAN message identifier
+    ///
+    /// # Returns
+    ///
+    /// Returns a reference to the message definition if found, or `None` if
+    /// the message ID is not known.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use can_decode::Parser;
+    /// use std::path::Path;
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let parser = Parser::from_dbc_file(Path::new("my_database.dbc"))?;
+    ///
+    /// if let Some(msg_def) = parser.msg_def(0x123) {
+    ///     println!("Message: {}", msg_def.name);
+    /// }
+    /// # Ok(())
+    /// # }
+    ///
     pub fn msg_def(&self, msg_id: u32) -> Option<&can_dbc::Message> {
         self.msg_defs.get(&msg_id)
     }
