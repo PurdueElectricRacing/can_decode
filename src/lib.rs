@@ -284,11 +284,12 @@ impl Parser {
                     decoded_signals.insert(decoded_signal.name.to_string(), decoded_signal);
                 }
                 None => {
-                    log::warn!(
+                    log::error!(
                         "Failed to decode signal {} from message {}",
                         signal_def.name,
                         msg_def.name
                     );
+                    return None;
                 }
             }
         }
