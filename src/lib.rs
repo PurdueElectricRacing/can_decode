@@ -97,7 +97,7 @@ impl Parser {
     /// Creates a new empty parser.
     ///
     /// Use [`add_from_dbc_file`](Parser::add_from_dbc_file) or
-    /// [`add_from_slice`](Parser::add_from_slice) to add message definitions.
+    /// [`add_from_str`](Parser::add_from_str) to add message definitions.
     ///
     /// # Example
     ///
@@ -378,7 +378,9 @@ impl Parser {
                 }
             }
             can_dbc::ByteOrder::BigEndian => {
-                // Idk if this is right
+                // Big-endian (Motorola) bit extraction: iterate bits from
+                // start_bit toward higher bit positions, collecting each bit
+                // and appending into the result MSB-first.
                 let mut bit_pos = start_bit;
 
                 for _ in 0..size {
@@ -449,8 +451,8 @@ impl Parser {
     /// let parser = Parser::from_dbc_file(Path::new("my_database.dbc"))?;
     ///
     /// for msg in parser.msg_defs() {
-    ///     println!("Message: {} (ID: {:#X})", msg.message_name(),
-    ///              match msg.message_id() {
+    ///     println!("Message: {} (ID: {:#X})", msg.name,
+    ///              match msg.id {
     ///                  can_dbc::MessageId::Standard(id) => id as u32,
     ///                  can_dbc::MessageId::Extended(id) => id,
     ///              });
