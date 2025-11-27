@@ -410,6 +410,249 @@ impl Parser {
         Some(result)
     }
 
+    /// Encodes a CAN message from signal values into raw bytes.
+    ///
+    /// Takes a message ID and a map of signal names to their physical values,
+    /// then encodes them according to the DBC definitions into raw CAN data bytes.
+    /// Applies inverse scaling (offset and factor) and packs bits according to
+    /// the signal's byte order and position. Applies scaling factors.
+    ///
+    /// # Arguments
+    ///
+    /// * `msg_id` - The CAN message identifier
+    /// * `signal_values` - Map of signal names to their physical values
+    ///
+    /// # Returns
+    ///
+    /// Returns `Some(Vec<u8>)` containing the encoded message data, or `None` if
+    /// the message ID is not found in the loaded DBC definitions or encoding fails.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use can_decode::Parser;
+    /// use std::path::Path;
+    /// use std::collections::HashMap;
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let parser = Parser::from_dbc_file(Path::new("my_database.dbc"))?;
+    ///
+    /// let mut signal_values = HashMap::new();
+    /// signal_values.insert("EngineSpeed".to_string(), 2500.0);
+    /// signal_values.insert("ThrottlePosition".to_string(), 45.5);
+    ///
+    /// if let Some(data) = parser.encode_msg(0x123, &signal_values) {
+    ///     println!("Encoded data: {:02X?}", data);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn encode_msg(
+        &self,
+        msg_id: u32,
+        signal_values: &std::collections::HashMap<String, f64>,
+    ) -> Option<Vec<u8>> {
+        let msg_def = self.msg_defs.get(&msg_id)?;
+
+        let msg_size = msg_def.size as usize;
+        let mut data = vec![0u8; msg_size];
+
+        for signal_def in &msg_def.signals {
+            if let Some(&physical_value) = signal_values.get(&signal_def.name) {
+                // Encode modifies the data buffer in place
+                match self.encode_signal(signal_def, physical_value, &mut data) {
+                    Some(()) => {}
+                    None => {
+                        log::error!(
+                            "Failed to encode signal {} for message {}",
+                            signal_def.name,
+                            msg_def.name
+                        );
+                        return None;
+                    }
+                }
+            }
+        }
+
+        Some(data)
+    }
+
+    /// Encodes a CAN message by message name instead of ID.
+    ///
+    /// Looks up the message by name and then encode it. This is slower as it
+    /// requires searching through all loaded messages. Applies scaling factors.
+    ///
+    /// # Arguments
+    ///
+    /// * `msg_name` - The name of the message as defined in the DBC file
+    /// * `signal_values` - Map of signal names to their physical values
+    ///
+    /// # Returns
+    ///
+    /// Returns `Some((msg_id, data))` containing the message ID and encoded data,
+    /// or `None` if the message name is not found or encoding fails.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use can_decode::Parser;
+    /// use std::path::Path;
+    /// use std::collections::HashMap;
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let parser = Parser::from_dbc_file(Path::new("my_database.dbc"))?;
+    ///
+    /// let mut signal_values = HashMap::new();
+    /// signal_values.insert("EngineSpeed".to_string(), 2500.0);
+    /// signal_values.insert("ThrottlePosition".to_string(), 45.5);
+    ///
+    /// if let Some((msg_id, data)) = parser.encode_msg_by_name("EngineData", &signal_values) {
+    ///     println!("Message ID: {:#X}, Data: {:02X?}", msg_id, data);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn encode_msg_by_name(
+        &self,
+        msg_name: &str,
+        signal_values: &std::collections::HashMap<String, f64>,
+    ) -> Option<(u32, Vec<u8>)> {
+        let (msg_id, _msg_def) = self
+            .msg_defs
+            .iter()
+            .find(|(_id, msg)| msg.name == msg_name)?;
+
+        let data = self.encode_msg(*msg_id, signal_values)?;
+        Some((*msg_id, data))
+    }
+
+    /// Encodes a single signal into raw CAN data.
+    ///
+    /// Applies inverse scaling (subtracts offset, divides by factor), converts to
+    /// the appropriate integer representation, and packs the bits into the data buffer.
+    fn encode_signal(
+        &self,
+        signal_def: &can_dbc::Signal,
+        physical_value: f64,
+        data: &mut [u8],
+    ) -> Option<()> {
+        // Apply inverse scaling: raw = (physical - offset) / factor
+        let raw_value = (physical_value - signal_def.offset) / signal_def.factor;
+
+        // Convert to integer and handle signed/unsigned
+        let raw_int = if signal_def.value_type == can_dbc::ValueType::Signed {
+            // Convert signed value to unsigned representation
+            let signed_val = raw_value.round() as i64;
+            let max_value = (1i64 << signal_def.size) - 1;
+            let min_value = -(1i64 << (signal_def.size - 1));
+
+            // Clamp to valid range
+            let clamped = signed_val.max(min_value).min(max_value);
+
+            // Convert to unsigned representation (two's complement)
+            if clamped < 0 {
+                let mask = (1u64 << signal_def.size) - 1;
+                (clamped as u64) & mask
+            } else {
+                clamped as u64
+            }
+        } else {
+            // Unsigned value
+            let unsigned_val = raw_value.round() as u64;
+            let max_value = (1u64 << signal_def.size) - 1;
+
+            // Clamp to valid range
+            unsigned_val.min(max_value)
+        };
+
+        // Insert the value into the data buffer
+        self.insert_signal_value(
+            data,
+            signal_def.start_bit as usize,
+            signal_def.size as usize,
+            signal_def.byte_order,
+            raw_int,
+        )
+    }
+
+    /// Inserts raw signal bits into CAN data.
+    ///
+    /// Handles both little-endian and big-endian byte ordering according to
+    /// the signal definition.
+    fn insert_signal_value(
+        &self,
+        data: &mut [u8],
+        start_bit: usize,
+        size: usize,
+        byte_order: can_dbc::ByteOrder,
+        value: u64,
+    ) -> Option<()> {
+        if data.is_empty() || size == 0 {
+            return None;
+        }
+
+        let total_bits = data.len() * 8;
+        if start_bit + size > total_bits {
+            return None;
+        }
+
+        match byte_order {
+            can_dbc::ByteOrder::LittleEndian => {
+                let start_byte = start_bit / 8;
+                let start_bit_in_byte = start_bit % 8;
+
+                let mut remaining_bits = size;
+                let mut current_byte = start_byte;
+                let mut bit_offset = start_bit_in_byte;
+                let mut value_offset = 0;
+
+                while remaining_bits > 0 && current_byte < data.len() {
+                    let bits_in_this_byte = std::cmp::min(remaining_bits, 8 - bit_offset);
+                    let mask = ((1u8 << bits_in_this_byte) - 1) << bit_offset;
+
+                    // Extract bits from value
+                    let value_bits =
+                        ((value >> value_offset) & ((1u64 << bits_in_this_byte) - 1)) as u8;
+
+                    // Clear the bits in the data byte and set new bits
+                    data[current_byte] =
+                        (data[current_byte] & !mask) | ((value_bits << bit_offset) & mask);
+
+                    remaining_bits -= bits_in_this_byte;
+                    value_offset += bits_in_this_byte;
+                    current_byte += 1;
+                    bit_offset = 0;
+                }
+            }
+            can_dbc::ByteOrder::BigEndian => {
+                // Big-endian (Motorola) bit insertion: iterate bits from
+                // start_bit toward higher bit positions, extracting each bit
+                // from value MSB-first.
+                let mut bit_pos = start_bit;
+
+                for i in 0..size {
+                    let byte_idx = bit_pos / 8;
+                    let bit_idx = 7 - (bit_pos % 8);
+
+                    if byte_idx >= data.len() {
+                        break;
+                    }
+
+                    // Extract bit from value (MSB first)
+                    let bit_val = ((value >> (size - 1 - i)) & 1) as u8;
+
+                    // Clear the bit and set new value
+                    let mask = 1u8 << bit_idx;
+                    data[byte_idx] = (data[byte_idx] & !mask) | ((bit_val << bit_idx) & mask);
+
+                    bit_pos += 1;
+                }
+            }
+        }
+
+        Some(())
+    }
+
     /// Returns all signal definitions for a given message ID.
     ///
     /// # Arguments
