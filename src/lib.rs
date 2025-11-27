@@ -543,12 +543,14 @@ impl Parser {
 
         // Convert to integer and handle signed/unsigned
         let raw_int = if signal_def.value_type == can_dbc::ValueType::Signed {
-            // Convert signed value to unsigned representation
+            // Convert signed physical value to the integer representation
+            // then to the unsigned bit pattern (two's complement).
             let signed_val = raw_value.round() as i64;
-            let max_value = (1i64 << signal_def.size) - 1;
+            // For an N-bit signed value the allowed signed range is
+            // -(1 << (N-1)) .. (1 << (N-1)) - 1
+            let max_value = (1i64 << (signal_def.size - 1)) - 1;
             let min_value = -(1i64 << (signal_def.size - 1));
 
-            // Clamp to valid range
             let clamped = signed_val.max(min_value).min(max_value);
 
             // Convert to unsigned representation (two's complement)
