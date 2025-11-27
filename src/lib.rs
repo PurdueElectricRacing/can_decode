@@ -115,7 +115,7 @@ impl Parser {
     /// Creates a parser and loads definitions from a DBC file.
     ///
     /// This is a convenience method that combines [`new`](Parser::new) and
-    /// [`add_from_dbc_file`](Parser::add_from_dbc_file).
+    /// [`add_from_str`](Parser::add_from_str).
     ///
     /// # Arguments
     ///
