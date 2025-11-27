@@ -47,6 +47,8 @@ pub struct DecodedMessage {
     pub msg_id: u32,
     /// Whether this is an extended (29-bit) CAN ID
     pub is_extended: bool,
+    /// Transmitting node of the message ("Unknown" if not specified)
+    pub tx_node: String,
     /// Map of signal names to their decoded values
     pub signals: std::collections::HashMap<String, DecodedSignal>,
 }
@@ -270,6 +272,10 @@ impl Parser {
         // to the decoded message
         let msg_def = self.msg_defs.get(&msg_id)?;
         let is_extended = matches!(msg_def.id, can_dbc::MessageId::Extended(_));
+        let tx_node = match &msg_def.transmitter {
+            can_dbc::Transmitter::NodeName(name) => name.clone(),
+            can_dbc::Transmitter::VectorXXX => "Unknown".to_string(),
+        };
         let mut decoded_signals = std::collections::HashMap::new();
 
         for signal_def in &msg_def.signals {
@@ -291,6 +297,7 @@ impl Parser {
             name: msg_def.name.clone(),
             msg_id,
             is_extended,
+            tx_node,
             signals: decoded_signals,
         })
     }
