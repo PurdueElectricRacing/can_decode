@@ -437,9 +437,10 @@ impl Parser {
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let parser = Parser::from_dbc_file(Path::new("my_database.dbc"))?;
     ///
-    /// let mut signal_values = HashMap::new();
-    /// signal_values.insert("EngineSpeed".to_string(), 2500.0);
-    /// signal_values.insert("ThrottlePosition".to_string(), 45.5);
+    /// let signal_values = HashMap::from([
+    ///     ("EngineSpeed".to_string(), 2500.0),
+    ///     ("ThrottlePosition".to_string(), 45.5),
+    /// ]);
     ///
     /// if let Some(data) = parser.encode_msg(0x123, &signal_values) {
     ///     println!("Encoded data: {:02X?}", data);
@@ -502,9 +503,10 @@ impl Parser {
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let parser = Parser::from_dbc_file(Path::new("my_database.dbc"))?;
     ///
-    /// let mut signal_values = HashMap::new();
-    /// signal_values.insert("EngineSpeed".to_string(), 2500.0);
-    /// signal_values.insert("ThrottlePosition".to_string(), 45.5);
+    /// let signal_values = HashMap::from([
+    ///     ("EngineSpeed".to_string(), 2500.0),
+    ///     ("ThrottlePosition".to_string(), 45.5),
+    /// ]);
     ///
     /// if let Some((msg_id, data)) = parser.encode_msg_by_name("EngineData", &signal_values) {
     ///     println!("Message ID: {:#X}, Data: {:02X?}", msg_id, data);
