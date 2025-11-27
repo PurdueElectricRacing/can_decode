@@ -451,8 +451,8 @@ impl Parser {
     /// for msg in parser.msg_defs() {
     ///     println!("Message: {} (ID: {:#X})", msg.message_name(),
     ///              match msg.message_id() {
-    ///                  can_dbc::MessageId::Standard(id) => *id as u32,
-    ///                  can_dbc::MessageId::Extended(id) => *id,
+    ///                  can_dbc::MessageId::Standard(id) => id as u32,
+    ///                  can_dbc::MessageId::Extended(id) => id,
     ///              });
     /// }
     /// # Ok(())
@@ -460,6 +460,10 @@ impl Parser {
     /// ```
     pub fn msg_defs(&self) -> Vec<can_dbc::Message> {
         self.msg_defs.values().cloned().collect()
+    }
+
+    pub fn msg_def(&self, msg_id: u32) -> Option<&can_dbc::Message> {
+        self.msg_defs.get(&msg_id)
     }
 
     /// Clears all loaded message definitions.
