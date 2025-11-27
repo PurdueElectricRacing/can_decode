@@ -97,7 +97,7 @@ impl Parser {
     /// Creates a new empty parser.
     ///
     /// Use [`add_from_dbc_file`](Parser::add_from_dbc_file) or
-    /// [`add_from_slice`](Parser::add_from_slice) to add message definitions.
+    /// [`add_from_str`](Parser::add_from_str) to add message definitions.
     ///
     /// # Example
     ///
@@ -115,7 +115,7 @@ impl Parser {
     /// Creates a parser and loads definitions from a DBC file.
     ///
     /// This is a convenience method that combines [`new`](Parser::new) and
-    /// [`add_from_dbc_file`](Parser::add_from_dbc_file).
+    /// [`add_from_str`](Parser::add_from_str).
     ///
     /// # Arguments
     ///
@@ -378,7 +378,9 @@ impl Parser {
                 }
             }
             can_dbc::ByteOrder::BigEndian => {
-                // Idk if this is right
+                // Big-endian (Motorola) bit extraction: iterate bits from
+                // start_bit toward higher bit positions, collecting each bit
+                // and appending into the result MSB-first.
                 let mut bit_pos = start_bit;
 
                 for _ in 0..size {
@@ -419,15 +421,15 @@ impl Parser {
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let parser = Parser::from_dbc_file(Path::new("my_database.dbc"))?;
     ///
-    /// if let Some(signals) = parser.signal_defs_for_msg(0x123) {
+    /// if let Some(signals) = parser.signal_defs(0x123) {
     ///     for signal in signals {
-    ///         println!("Signal: {}", signal.name());
+    ///         println!("Signal: {}", signal.name);
     ///     }
     /// }
     /// # Ok(())
     /// # }
     /// ```
-    pub fn signal_defs_for_msg(&self, msg_id: u32) -> Option<Vec<can_dbc::Signal>> {
+    pub fn signal_defs(&self, msg_id: u32) -> Option<Vec<can_dbc::Signal>> {
         let msg_def = self.msg_defs.get(&msg_id)?;
         Some(msg_def.signals.to_vec())
     }
@@ -449,10 +451,10 @@ impl Parser {
     /// let parser = Parser::from_dbc_file(Path::new("my_database.dbc"))?;
     ///
     /// for msg in parser.msg_defs() {
-    ///     println!("Message: {} (ID: {:#X})", msg.message_name(),
-    ///              match msg.message_id() {
-    ///                  can_dbc::MessageId::Standard(id) => *id as u32,
-    ///                  can_dbc::MessageId::Extended(id) => *id,
+    ///     println!("Message: {} (ID: {:#X})", msg.name,
+    ///              match msg.id {
+    ///                  can_dbc::MessageId::Standard(id) => id as u32,
+    ///                  can_dbc::MessageId::Extended(id) => id,
     ///              });
     /// }
     /// # Ok(())
@@ -460,6 +462,36 @@ impl Parser {
     /// ```
     pub fn msg_defs(&self) -> Vec<can_dbc::Message> {
         self.msg_defs.values().cloned().collect()
+    }
+
+    /// Returns the message definition for a given message ID.
+    ///
+    /// # Arguments
+    ///
+    /// * `msg_id` - The CAN message identifier
+    ///
+    /// # Returns
+    ///
+    /// Returns a reference to the message definition if found, or `None` if
+    /// the message ID is not known.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use can_decode::Parser;
+    /// use std::path::Path;
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let parser = Parser::from_dbc_file(Path::new("my_database.dbc"))?;
+    ///
+    /// if let Some(msg_def) = parser.msg_def(0x123) {
+    ///     println!("Message: {}", msg_def.name);
+    /// }
+    /// # Ok(())
+    /// # }
+    ///
+    pub fn msg_def(&self, msg_id: u32) -> Option<&can_dbc::Message> {
+        self.msg_defs.get(&msg_id)
     }
 
     /// Clears all loaded message definitions.
