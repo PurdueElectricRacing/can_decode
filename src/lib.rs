@@ -96,6 +96,21 @@ pub struct DecodedSignal {
     pub unit: String,
 }
 
+#[derive(thiserror::Error, Debug)]
+pub enum ParseError {
+    /// Failed to read a file
+    #[error("Failed to read file: {0}")]
+    Io(#[from] std::io::Error),
+
+    /// Failed to parse file as UTF-8
+    #[error("Invalid UTF-8 in file: {0}")]
+    Utf8(#[from] std::string::FromUtf8Error),
+
+    /// Failed to parse DBC content
+    #[error("Failed to parse DBC: {0}")]
+    DbcParse(#[from] can_dbc::DbcError),
+}
+
 /// A CAN message parser that uses DBC file definitions.
 ///
 /// The parser loads message and signal definitions from DBC files and uses them
@@ -167,7 +182,7 @@ impl Parser {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn from_dbc_file(path: &std::path::Path) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn from_dbc_file(path: &std::path::Path) -> Result<Self, ParseError> {
         let mut parser = Self::new();
         parser.add_from_dbc_file(path)?;
         Ok(parser)
@@ -199,11 +214,8 @@ impl Parser {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn add_from_str(&mut self, buffer: &str) -> Result<(), Box<dyn std::error::Error>> {
-        let dbc = can_dbc::Dbc::try_from(buffer).map_err(|e| {
-            log::error!("Failed to parse DBC: {:?}", e);
-            format!("{:?}", e)
-        })?;
+    pub fn add_from_str(&mut self, buffer: &str) -> Result<(), can_dbc::DbcError> {
+        let dbc = can_dbc::Dbc::try_from(buffer)?;
         for msg_def in dbc.messages {
             let msg_id = match msg_def.id {
                 can_dbc::MessageId::Standard(id) => id as u32,
@@ -247,12 +259,8 @@ impl Parser {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn add_from_dbc_file(
-        &mut self,
-        path: &std::path::Path,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let buffer = std::fs::read(path)?;
-        let s = String::from_utf8(buffer)?;
+    pub fn add_from_dbc_file(&mut self, path: &std::path::Path) -> Result<(), ParseError> {
+        let s = std::fs::read_to_string(path)?;
         self.add_from_str(&s)?;
         Ok(())
     }

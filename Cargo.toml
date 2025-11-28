@@ -14,3 +14,4 @@ categories = ["embedded", "automotive", "encoding", "parsing"]
 [dependencies]
 can-dbc = "8.0.0"
 log = "0.4"
+thiserror = "2.0.17"
