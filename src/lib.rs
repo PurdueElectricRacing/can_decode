@@ -501,6 +501,13 @@ impl Parser {
                         return None;
                     }
                 }
+            } else {
+                log::error!(
+                    "Signal {} not provided for message {} during encoding",
+                    signal_def.name,
+                    msg_def.name
+                );
+                return None;
             }
         }
 
