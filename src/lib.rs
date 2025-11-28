@@ -488,22 +488,25 @@ impl Parser {
         let mut data = vec![0u8; msg_size];
 
         for signal_def in &msg_def.signals {
-            if let Some(&physical_value) = signal_values.get(&signal_def.name) {
-                // Encode modifies the data buffer in place
-                match self.encode_signal(signal_def, physical_value, &mut data) {
-                    Some(()) => {}
-                    None => {
-                        log::error!(
-                            "Failed to encode signal {} for message {}",
-                            signal_def.name,
-                            msg_def.name
-                        );
-                        return None;
-                    }
+            let physical_value = match signal_values.get(&signal_def.name) {
+                Some(&v) => v,
+                None => {
+                    log::error!(
+                        "Signal {} not provided for message {} during encoding",
+                        signal_def.name,
+                        msg_def.name
+                    );
+                    return None;
                 }
-            } else {
+            };
+
+            // encode_signal() modifies the data buffer in place
+            if self
+                .encode_signal(signal_def, physical_value, &mut data)
+                .is_none()
+            {
                 log::error!(
-                    "Signal {} not provided for message {} during encoding",
+                    "Failed to encode signal {} for message {}",
                     signal_def.name,
                     msg_def.name
                 );
