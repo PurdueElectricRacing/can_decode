@@ -652,11 +652,11 @@ impl Parser {
 
                 while remaining_bits > 0 && current_byte < data.len() {
                     let bits_in_this_byte = std::cmp::min(remaining_bits, 8 - bit_offset);
-                    let mask = ((1u8 << bits_in_this_byte) - 1) << bit_offset;
+                    let mask = (((1u16 << bits_in_this_byte) - 1) << bit_offset) as u8;
 
                     // Extract bits from value
-                    let value_bits =
-                        ((value >> value_offset) & ((1u64 << bits_in_this_byte) - 1)) as u8;
+                    let value_mask = (1u64 << bits_in_this_byte) - 1;
+                    let value_bits = ((value >> value_offset) & value_mask) as u8;
 
                     // Clear the bits in the data byte and set new bits
                     data[current_byte] =
