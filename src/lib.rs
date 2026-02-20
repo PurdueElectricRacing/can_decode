@@ -64,6 +64,28 @@
 //! # }
 //! ```
 
+/// Creates a bitmask with the lowest N bits set to 1.
+///
+/// This macro generates a mask value of the specified type with the lower `bits` bits set to 1
+/// and all other bits set to 0. It's used internally for extracting or masking the lower portion of
+/// integer values.
+///
+/// # Arguments
+///
+/// * `$bits` - The number of low bits to set (must be <= the bit width of the type)
+/// * `$ty` - The integer type for the mask (e.g., u8, u16, u32, u64)
+///
+/// # Examples
+///
+/// ```ignore
+/// let mask = low_bits_mask!(4, u8);  // Returns 0b00001111 (15)
+/// let mask = low_bits_mask!(8, u8);  // Returns 0b11111111 (255)
+/// let mask = low_bits_mask!(0, u16); // Returns 0
+/// ```
+///
+/// # Panics
+///
+/// Panics in debug builds if `bits` exceeds the bit width of the specified type.
 macro_rules! low_bits_mask {
     ($bits:expr, $ty:ty) => {{
         debug_assert!($bits <= <$ty>::BITS as usize);
@@ -74,7 +96,6 @@ macro_rules! low_bits_mask {
         }
     }};
 }
-
 
 /// A decoded CAN message containing signal values.
 ///
