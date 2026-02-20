@@ -64,6 +64,18 @@
 //! # }
 //! ```
 
+macro_rules! low_bits_mask {
+    ($bits:expr, $ty:ty) => {{
+        debug_assert!($bits <= <$ty>::BITS as usize);
+        match $bits {
+            0 => 0 as $ty,
+            n if n == <$ty>::BITS as usize => <$ty>::MAX,
+            n => <$ty>::MAX >> (<$ty>::BITS as usize - n),
+        }
+    }};
+}
+
+
 /// A decoded CAN message containing signal values.
 ///
 /// This structure represents a fully decoded CAN message with all its signals
