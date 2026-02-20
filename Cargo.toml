@@ -1,6 +1,6 @@
 [package]
 name = "can_decode"
-version = "0.4.1"
+version = "0.4.2"
 edition = "2024"
 authors = ["Millan Kumar <millankumar@gmail.com>", "Purdue Electric Racing"]
 description = "Decode and encode CAN frames into messages/signals in a fast and easy way."
@@ -12,5 +12,5 @@ keywords = ["CAN", "decode", "encode", "dbc", "ecu"]
 categories = ["embedded", "automotive", "encoding", "parsing"]
 
 [dependencies]
-can-dbc = "8.0.0"
-log = "0.4"
+can-dbc = "8.1.0"
+log = "0.4.29"
