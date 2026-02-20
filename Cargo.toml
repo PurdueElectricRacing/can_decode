@@ -12,5 +12,5 @@ keywords = ["CAN", "decode", "encode", "dbc", "ecu"]
 categories = ["embedded", "automotive", "encoding", "parsing"]
 
 [dependencies]
-can-dbc = "8.0.0"
-log = "0.4"
+can-dbc = "8.1.0"
+log = "0.4.29"
