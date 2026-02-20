@@ -345,7 +345,7 @@ impl Parser {
                 Some(decoded_signal) => {
                     decoded_signals.insert(decoded_signal.name.to_string(), decoded_signal);
                 }
-                None => {
+                _ => {
                     log::error!(
                         "Failed to decode signal {} from message {}",
                         signal_def.name,
@@ -381,7 +381,7 @@ impl Parser {
         // Convert to signed if needed
         let raw_value = if signal_def.value_type == can_dbc::ValueType::Signed {
             // Convert to signed based on signal size
-            let max_unsigned = (1u64 << signal_def.size) - 1;
+            let max_unsigned = low_bits_mask!(signal_def.size as usize, u64);
             let sign_bit = 1u64 << (signal_def.size - 1);
 
             if raw_value & sign_bit != 0 {
@@ -437,7 +437,7 @@ impl Parser {
 
                 while remaining_bits > 0 && current_byte < data.len() {
                     let bits_in_this_byte = std::cmp::min(remaining_bits, 8 - bit_offset);
-                    let mask = ((1u64 << bits_in_this_byte) - 1) << bit_offset;
+                    let mask = low_bits_mask!(bits_in_this_byte, u64) << bit_offset;
                     let byte_value = ((data[current_byte] as u64) & mask) >> bit_offset;
 
                     result |= byte_value << (size - remaining_bits);
@@ -523,7 +523,7 @@ impl Parser {
         for signal_def in &msg_def.signals {
             let physical_value = match signal_values.get(&signal_def.name) {
                 Some(&v) => v,
-                None => {
+                _ => {
                     log::error!(
                         "Signal {} not provided for message {} during encoding",
                         signal_def.name,
@@ -628,7 +628,7 @@ impl Parser {
 
             // Convert to unsigned representation (two's complement)
             if clamped < 0 {
-                let mask = (1u64 << signal_def.size) - 1;
+                let mask = low_bits_mask!(signal_def.size as usize, u64);
                 (clamped as u64) & mask
             } else {
                 clamped as u64
@@ -636,7 +636,7 @@ impl Parser {
         } else {
             // Unsigned value
             let unsigned_val = raw_value.round() as u64;
-            let max_value = (1u64 << signal_def.size) - 1;
+            let max_value = low_bits_mask!(signal_def.size as usize, u64);
 
             // Clamp to valid range
             unsigned_val.min(max_value)
@@ -685,10 +685,10 @@ impl Parser {
 
                 while remaining_bits > 0 && current_byte < data.len() {
                     let bits_in_this_byte = std::cmp::min(remaining_bits, 8 - bit_offset);
-                    let mask = (((1u16 << bits_in_this_byte) - 1) << bit_offset) as u8;
+                    let mask = low_bits_mask!(bits_in_this_byte, u8) << bit_offset;
 
                     // Extract bits from value
-                    let value_mask = (1u64 << bits_in_this_byte) - 1;
+                    let value_mask = low_bits_mask!(bits_in_this_byte, u64);
                     let value_bits = ((value >> value_offset) & value_mask) as u8;
 
                     // Clear the bits in the data byte and set new bits
