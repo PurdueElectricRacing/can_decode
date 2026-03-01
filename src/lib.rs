@@ -47,7 +47,7 @@
 //! let parser = Parser::from_dbc_file(Path::new("my_can_database.dbc"))?;
 //!
 //! // Encode a CAN message from signal values
-//! let mut signal_values = HashMap::from([
+//! let signal_values = HashMap::from([
 //!     ("EngineSpeed".to_string(), 2500.0),
 //!     ("ThrottlePosition".to_string(), 45.5),
 //! ]);
