@@ -14,3 +14,4 @@ categories = ["embedded", "automotive", "encoding", "parsing"]
 [dependencies]
 can-dbc = "8.1.0"
 log = "0.4.29"
+indexmap = "2.13.0"

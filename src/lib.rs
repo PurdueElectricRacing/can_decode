@@ -111,8 +111,8 @@ pub struct DecodedMessage {
     pub is_extended: bool,
     /// Transmitting node of the message ("Unknown" if not specified)
     pub tx_node: String,
-    /// Map of signal names to their decoded values
-    pub signals: std::collections::HashMap<String, DecodedSignal>,
+    /// Ordered map of signal names to their decoded values (maintains insertion order)
+    pub signals: indexmap::map::IndexMap<String, DecodedSignal>,
 }
 
 /// A decoded signal with its physical value.
@@ -338,7 +338,7 @@ impl Parser {
             can_dbc::Transmitter::NodeName(name) => name.clone(),
             can_dbc::Transmitter::VectorXXX => "Unknown".to_string(),
         };
-        let mut decoded_signals = std::collections::HashMap::new();
+        let mut decoded_signals = indexmap::map::IndexMap::new();
 
         for signal_def in &msg_def.signals {
             match self.decode_signal(signal_def, data) {
