@@ -47,7 +47,7 @@
 //! let parser = Parser::from_dbc_file(Path::new("my_can_database.dbc"))?;
 //!
 //! // Encode a CAN message from signal values
-//! let mut signal_values = HashMap::from([
+//! let signal_values = HashMap::from([
 //!     ("EngineSpeed".to_string(), 2500.0),
 //!     ("ThrottlePosition".to_string(), 45.5),
 //! ]);
@@ -97,6 +97,12 @@ macro_rules! low_bits_mask {
     }};
 }
 
+/// Type alias for the ordered map of signals returned by decoding.
+///
+/// This allows downstream crates to reference the signal map type without
+/// needing to add indexmap as a dependency.
+pub type SignalMap = indexmap::map::IndexMap<String, DecodedSignal>;
+
 /// A decoded CAN message containing signal values.
 ///
 /// This structure represents a fully decoded CAN message with all its signals
@@ -111,8 +117,8 @@ pub struct DecodedMessage {
     pub is_extended: bool,
     /// Transmitting node of the message ("Unknown" if not specified)
     pub tx_node: String,
-    /// Map of signal names to their decoded values
-    pub signals: std::collections::HashMap<String, DecodedSignal>,
+    /// Ordered map of signal names to their decoded values (maintains insertion order)
+    pub signals: SignalMap,
 }
 
 /// A decoded signal with its physical value.
@@ -338,7 +344,7 @@ impl Parser {
             can_dbc::Transmitter::NodeName(name) => name.clone(),
             can_dbc::Transmitter::VectorXXX => "Unknown".to_string(),
         };
-        let mut decoded_signals = std::collections::HashMap::new();
+        let mut decoded_signals = SignalMap::new();
 
         for signal_def in &msg_def.signals {
             match self.decode_signal(signal_def, data) {
