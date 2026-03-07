@@ -121,6 +121,14 @@ pub struct DecodedMessage {
     pub signals: SignalMap,
 }
 
+#[derive(Debug, Clone)]
+pub enum DecodedSignalValue {
+    /// The physical value after applying factor and offset
+    Numeric(f64),
+    /// The string value for an enumerated signal (if defined in the DBC)
+    Enum(String),
+}
+
 /// A decoded signal with its physical value.
 ///
 /// Represents a single signal from a CAN message after decoding and applying
@@ -130,7 +138,7 @@ pub struct DecodedSignal {
     /// The name of the signal as defined in the DBC file
     pub name: String,
     /// The physical value after applying factor and offset
-    pub value: f64,
+    pub value: DecodedSignalValue,
     /// The unit of measurement (e.g., "km/h", "°C", "RPM")
     pub unit: String,
 }
@@ -372,7 +380,7 @@ impl Parser {
         let mut decoded_signals = SignalMap::new();
 
         for signal_def in &msg_def.signals {
-            match self.decode_signal(signal_def, data) {
+            match self.decode_signal(msg_id, signal_def, data) {
                 Some(decoded_signal) => {
                     decoded_signals.insert(decoded_signal.name.to_string(), decoded_signal);
                 }
@@ -400,7 +408,12 @@ impl Parser {
     ///
     /// Extracts the raw bits for a signal, converts to signed/unsigned as needed,
     /// and applies the scaling factor and offset to produce the physical value.
-    fn decode_signal(&self, signal_def: &can_dbc::Signal, data: &[u8]) -> Option<DecodedSignal> {
+    fn decode_signal(
+        &self,
+        msg_id: u32,
+        signal_def: &can_dbc::Signal,
+        data: &[u8],
+    ) -> Option<DecodedSignal> {
         // Extract raw value based on byte order and signal properties
         let raw_value = self.extract_signal_value(
             data,
@@ -409,30 +422,50 @@ impl Parser {
             signal_def.byte_order,
         )?;
 
-        // Convert to signed if needed
-        let raw_value = if signal_def.value_type == can_dbc::ValueType::Signed {
-            // Convert to signed based on signal size
-            let max_unsigned = low_bits_mask!(signal_def.size as usize, u64);
-            let sign_bit = 1u64 << (signal_def.size - 1);
+        // Check if this signal has an enum definition
+        let enum_name = self
+            .enum_defs
+            .get(&msg_id)
+            .and_then(|enums| {
+                enums
+                    .iter()
+                    .find(|e| e.signal_name == signal_def.name)
+                    .and_then(|e| e.enum_map.get(&(raw_value as i64)))
+            })
+            .cloned();
 
-            if raw_value & sign_bit != 0 {
-                // Negative number - extend sign
-                (raw_value | (!max_unsigned)) as i64 as f64
+        if let Some(enum_str) = enum_name {
+            Some(DecodedSignal {
+                name: signal_def.name.clone(),
+                value: DecodedSignalValue::Enum(enum_str),
+                unit: signal_def.unit.clone(),
+            })
+        } else {
+            // Convert to signed if needed
+            let raw_value = if signal_def.value_type == can_dbc::ValueType::Signed {
+                // Convert to signed based on signal size
+                let max_unsigned = low_bits_mask!(signal_def.size as usize, u64);
+                let sign_bit = 1u64 << (signal_def.size - 1);
+
+                if raw_value & sign_bit != 0 {
+                    // Negative number - extend sign
+                    (raw_value | (!max_unsigned)) as i64 as f64
+                } else {
+                    raw_value as f64
+                }
             } else {
                 raw_value as f64
-            }
-        } else {
-            raw_value as f64
-        };
+            };
 
-        // Apply scaling
-        let scaled_value = raw_value * signal_def.factor + signal_def.offset;
+            // Apply scaling
+            let scaled_value = raw_value * signal_def.factor + signal_def.offset;
 
-        Some(DecodedSignal {
-            name: signal_def.name.clone(),
-            value: scaled_value,
-            unit: signal_def.unit.clone(),
-        })
+            Some(DecodedSignal {
+                name: signal_def.name.clone(),
+                value: DecodedSignalValue::Numeric(scaled_value),
+                unit: signal_def.unit.clone(),
+            })
+        }
     }
 
     /// Extracts raw signal bits from CAN data.
