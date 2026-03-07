@@ -29,7 +29,7 @@
 //! if let Some(decoded) = parser.decode_msg(msg_id, &data) {
 //!     println!("Message: {}", decoded.name);
 //!     for (signal_name, signal) in &decoded.signals {
-//!         println!("  {}: {} {}", signal_name, signal.value, signal.unit);
+//!         println!("  {}: {:?} {}", signal_name, signal.value, signal.unit);
 //!     }
 //! }
 //! # Ok(())
@@ -149,6 +149,7 @@ pub struct DecodedSignal {
 /// DBC files can define enum-like value descriptions per signal, such as
 /// `0 = "Off"`, `1 = "On"`. This structure stores those mappings so decoded
 /// raw values can be returned as human-readable labels.
+#[derive(Debug, Clone)]
 pub struct EnumDef {
     /// Signal name this value-description map belongs to.
     pub signal_name: String,
@@ -370,7 +371,7 @@ impl Parser {
     /// if let Some(decoded) = parser.decode_msg(msg_id, &data) {
     ///     println!("Message: {} (ID: {:#X})", decoded.name, decoded.msg_id);
     ///     for (name, signal) in &decoded.signals {
-    ///         println!("  {}: {} {}", name, signal.value, signal.unit);
+    ///         println!("  {}: {:?} {}", name, signal.value, signal.unit);
     ///     }
     /// } else {
     ///     println!("Unknown message ID: {:#X}", msg_id);
