@@ -29,7 +29,7 @@
 //! if let Some(decoded) = parser.decode_msg(msg_id, &data) {
 //!     println!("Message: {}", decoded.name);
 //!     for (signal_name, signal) in &decoded.signals {
-//!         println!("  {}: {} {}", signal_name, signal.value, signal.unit);
+//!         println!("  {}: {:?} {}", signal_name, signal.value, signal.unit);
 //!     }
 //! }
 //! # Ok(())
@@ -121,18 +121,40 @@ pub struct DecodedMessage {
     pub signals: SignalMap,
 }
 
+#[derive(Debug, Clone)]
+pub enum DecodedSignalValue {
+    /// The physical value after applying factor and offset
+    Numeric(f64),
+    /// The raw value and the string value for an enumerated signal (if defined in the DBC)
+    Enum(i64, String),
+}
+
 /// A decoded signal with its physical value.
 ///
-/// Represents a single signal from a CAN message after decoding and applying
-/// scaling/offset transformations.
+/// Represents a single signal from a CAN message after decoding. The value is
+/// either a numeric physical value (after scaling/offset) or an enum label from
+/// DBC value descriptions.
 #[derive(Debug, Clone)]
 pub struct DecodedSignal {
     /// The name of the signal as defined in the DBC file
     pub name: String,
-    /// The physical value after applying factor and offset
-    pub value: f64,
+    /// The decoded value, either a numeric physical value or an enum label
+    pub value: DecodedSignalValue,
     /// The unit of measurement (e.g., "km/h", "°C", "RPM")
     pub unit: String,
+}
+
+/// Value-description mapping for a specific signal.
+///
+/// DBC files can define enum-like value descriptions per signal, such as
+/// `0 = "Off"`, `1 = "On"`. This structure stores those mappings so decoded
+/// raw values can be returned as human-readable labels.
+#[derive(Debug, Clone)]
+pub struct EnumDef {
+    /// Signal name this value-description map belongs to.
+    pub signal_name: String,
+    /// Map from raw integer signal value to label.
+    pub enum_map: std::collections::HashMap<i64, String>,
 }
 
 /// A CAN message parser that uses DBC file definitions.
@@ -161,6 +183,9 @@ pub struct DecodedSignal {
 pub struct Parser {
     /// Map of message ID to message definitions
     msg_defs: std::collections::HashMap<u32, can_dbc::Message>,
+
+    /// Map of message ID to per-signal enum/value-description mappings.
+    enum_defs: std::collections::HashMap<u32, Vec<EnumDef>>,
 }
 
 impl Parser {
@@ -179,6 +204,7 @@ impl Parser {
     pub fn new() -> Self {
         Self {
             msg_defs: std::collections::HashMap::new(),
+            enum_defs: std::collections::HashMap::new(),
         }
     }
 
@@ -212,11 +238,12 @@ impl Parser {
         Ok(parser)
     }
 
-    /// Adds message definitions from a DBC file string.
+    /// Adds message and enum/value-description definitions from a DBC string.
     ///
     /// This method parses DBC content from a string slice and adds all message
     /// definitions to the parser. If a message ID already exists, it will be
-    /// overwritten and a warning will be logged.
+    /// overwritten and a warning will be logged. Signal value descriptions
+    /// (enumerations) are also captured for enum decoding.
     ///
     /// # Arguments
     ///
@@ -244,10 +271,7 @@ impl Parser {
             format!("{:?}", e)
         })?;
         for msg_def in dbc.messages {
-            let msg_id = match msg_def.id {
-                can_dbc::MessageId::Standard(id) => id as u32,
-                can_dbc::MessageId::Extended(id) => id,
-            };
+            let msg_id = msg_def.id.raw();
             if self.msg_defs.contains_key(&msg_id) {
                 log::warn!(
                     "Duplicate message ID {msg_id:#X} ({}). Overwriting existing definition.",
@@ -255,6 +279,40 @@ impl Parser {
                 );
             }
             self.msg_defs.insert(msg_id, msg_def.clone());
+        }
+        for val_desc in dbc.value_descriptions {
+            match val_desc {
+                can_dbc::ValueDescription::Signal {
+                    message_id,
+                    name,
+                    value_descriptions,
+                } => {
+                    let msg_id = message_id.raw();
+                    let enum_def = EnumDef {
+                        signal_name: name.clone(),
+                        enum_map: value_descriptions
+                            .iter()
+                            .map(|vd| (vd.id, vd.description.clone()))
+                            .collect(),
+                    };
+                    let entry = self.enum_defs.entry(msg_id).or_default();
+                    if let Some(existing) = entry
+                        .iter_mut()
+                        .find(|e| e.signal_name == enum_def.signal_name)
+                    {
+                        *existing = enum_def;
+                        log::warn!(
+                            "Duplicate value description for signal '{}' in message ID {:#X}. \
+                            Overwriting existing enum definition.",
+                            name,
+                            msg_id
+                        );
+                    } else {
+                        entry.push(enum_def);
+                    }
+                }
+                can_dbc::ValueDescription::EnvironmentVariable { .. } => {}
+            }
         }
         Ok(())
     }
@@ -300,7 +358,7 @@ impl Parser {
     ///
     /// Takes a CAN message ID and raw data bytes, then decodes all signals
     /// according to the DBC definitions. Each signal is extracted, scaled,
-    /// and converted to its physical value.
+    /// and converted to its physical value or enum label (if defined).
     ///
     /// # Arguments
     ///
@@ -327,7 +385,7 @@ impl Parser {
     /// if let Some(decoded) = parser.decode_msg(msg_id, &data) {
     ///     println!("Message: {} (ID: {:#X})", decoded.name, decoded.msg_id);
     ///     for (name, signal) in &decoded.signals {
-    ///         println!("  {}: {} {}", name, signal.value, signal.unit);
+    ///         println!("  {}: {:?} {}", name, signal.value, signal.unit);
     ///     }
     /// } else {
     ///     println!("Unknown message ID: {:#X}", msg_id);
@@ -347,7 +405,7 @@ impl Parser {
         let mut decoded_signals = SignalMap::new();
 
         for signal_def in &msg_def.signals {
-            match self.decode_signal(signal_def, data) {
+            match self.decode_signal(msg_id, signal_def, data) {
                 Some(decoded_signal) => {
                     decoded_signals.insert(decoded_signal.name.to_string(), decoded_signal);
                 }
@@ -374,8 +432,14 @@ impl Parser {
     /// Decodes a single signal from raw CAN data.
     ///
     /// Extracts the raw bits for a signal, converts to signed/unsigned as needed,
-    /// and applies the scaling factor and offset to produce the physical value.
-    fn decode_signal(&self, signal_def: &can_dbc::Signal, data: &[u8]) -> Option<DecodedSignal> {
+    /// and then either resolves a DBC enum label or applies scaling/offset to
+    /// produce a numeric physical value.
+    fn decode_signal(
+        &self,
+        msg_id: u32,
+        signal_def: &can_dbc::Signal,
+        data: &[u8],
+    ) -> Option<DecodedSignal> {
         // Extract raw value based on byte order and signal properties
         let raw_value = self.extract_signal_value(
             data,
@@ -385,29 +449,49 @@ impl Parser {
         )?;
 
         // Convert to signed if needed
-        let raw_value = if signal_def.value_type == can_dbc::ValueType::Signed {
+        let raw_value_with_sign = if signal_def.value_type == can_dbc::ValueType::Signed {
             // Convert to signed based on signal size
             let max_unsigned = low_bits_mask!(signal_def.size as usize, u64);
             let sign_bit = 1u64 << (signal_def.size - 1);
 
             if raw_value & sign_bit != 0 {
                 // Negative number - extend sign
-                (raw_value | (!max_unsigned)) as i64 as f64
+                (raw_value | (!max_unsigned)) as i64
             } else {
-                raw_value as f64
+                raw_value as i64
             }
         } else {
-            raw_value as f64
+            raw_value as i64
         };
 
-        // Apply scaling
-        let scaled_value = raw_value * signal_def.factor + signal_def.offset;
+        // Check if this signal has an enum definition
+        let enum_name = self
+            .enum_defs
+            .get(&msg_id)
+            .and_then(|enums| {
+                enums
+                    .iter()
+                    .find(|e| e.signal_name == signal_def.name)
+                    .and_then(|e| e.enum_map.get(&raw_value_with_sign))
+            })
+            .cloned();
 
-        Some(DecodedSignal {
-            name: signal_def.name.clone(),
-            value: scaled_value,
-            unit: signal_def.unit.clone(),
-        })
+        if let Some(enum_str) = enum_name {
+            Some(DecodedSignal {
+                name: signal_def.name.clone(),
+                value: DecodedSignalValue::Enum(raw_value_with_sign, enum_str),
+                unit: signal_def.unit.clone(),
+            })
+        } else {
+            // Apply scaling
+            let scaled_value = raw_value_with_sign as f64 * signal_def.factor + signal_def.offset;
+
+            Some(DecodedSignal {
+                name: signal_def.name.clone(),
+                value: DecodedSignalValue::Numeric(scaled_value),
+                unit: signal_def.unit.clone(),
+            })
+        }
     }
 
     /// Extracts raw signal bits from CAN data.
@@ -831,7 +915,7 @@ impl Parser {
     /// Clears all loaded message definitions.
     ///
     /// After calling this method, the parser will have no message definitions
-    /// and will need to reload DBC files.
+    /// or enum/value-description mappings and will need to reload DBC files.
     ///
     /// # Example
     ///
@@ -843,6 +927,7 @@ impl Parser {
     /// ```
     pub fn clear(&mut self) {
         self.msg_defs.clear();
+        self.enum_defs.clear();
     }
 }
 
