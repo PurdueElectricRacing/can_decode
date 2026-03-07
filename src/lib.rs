@@ -433,6 +433,22 @@ impl Parser {
             signal_def.byte_order,
         )?;
 
+        // Convert to signed if needed
+        let raw_value_with_sign = if signal_def.value_type == can_dbc::ValueType::Signed {
+            // Convert to signed based on signal size
+            let max_unsigned = low_bits_mask!(signal_def.size as usize, u64);
+            let sign_bit = 1u64 << (signal_def.size - 1);
+
+            if raw_value & sign_bit != 0 {
+                // Negative number - extend sign
+                (raw_value | (!max_unsigned)) as i64
+            } else {
+                raw_value as i64
+            }
+        } else {
+            raw_value as i64
+        };
+
         // Check if this signal has an enum definition
         let enum_name = self
             .enum_defs
@@ -441,7 +457,7 @@ impl Parser {
                 enums
                     .iter()
                     .find(|e| e.signal_name == signal_def.name)
-                    .and_then(|e| e.enum_map.get(&(raw_value as i64)))
+                    .and_then(|e| e.enum_map.get(&raw_value_with_sign))
             })
             .cloned();
 
@@ -452,24 +468,8 @@ impl Parser {
                 unit: signal_def.unit.clone(),
             })
         } else {
-            // Convert to signed if needed
-            let raw_value = if signal_def.value_type == can_dbc::ValueType::Signed {
-                // Convert to signed based on signal size
-                let max_unsigned = low_bits_mask!(signal_def.size as usize, u64);
-                let sign_bit = 1u64 << (signal_def.size - 1);
-
-                if raw_value & sign_bit != 0 {
-                    // Negative number - extend sign
-                    (raw_value | (!max_unsigned)) as i64 as f64
-                } else {
-                    raw_value as f64
-                }
-            } else {
-                raw_value as f64
-            };
-
             // Apply scaling
-            let scaled_value = raw_value * signal_def.factor + signal_def.offset;
+            let scaled_value = raw_value_with_sign as f64 * signal_def.factor + signal_def.offset;
 
             Some(DecodedSignal {
                 name: signal_def.name.clone(),
