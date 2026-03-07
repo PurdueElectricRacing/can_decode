@@ -131,8 +131,9 @@ pub enum DecodedSignalValue {
 
 /// A decoded signal with its physical value.
 ///
-/// Represents a single signal from a CAN message after decoding and applying
-/// scaling/offset transformations.
+/// Represents a single signal from a CAN message after decoding. The value is
+/// either a numeric physical value (after scaling/offset) or an enum label from
+/// DBC value descriptions.
 #[derive(Debug, Clone)]
 pub struct DecodedSignal {
     /// The name of the signal as defined in the DBC file
@@ -143,8 +144,15 @@ pub struct DecodedSignal {
     pub unit: String,
 }
 
+/// Value-description mapping for a specific signal.
+///
+/// DBC files can define enum-like value descriptions per signal, such as
+/// `0 = "Off"`, `1 = "On"`. This structure stores those mappings so decoded
+/// raw values can be returned as human-readable labels.
 pub struct EnumDef {
+    /// Signal name this value-description map belongs to.
     pub signal_name: String,
+    /// Map from raw integer signal value to label.
     pub enum_map: std::collections::HashMap<i64, String>,
 }
 
@@ -175,6 +183,7 @@ pub struct Parser {
     /// Map of message ID to message definitions
     msg_defs: std::collections::HashMap<u32, can_dbc::Message>,
 
+    /// Map of message ID to per-signal enum/value-description mappings.
     enum_defs: std::collections::HashMap<u32, Vec<EnumDef>>,
 }
 
@@ -228,11 +237,12 @@ impl Parser {
         Ok(parser)
     }
 
-    /// Adds message definitions from a DBC file string.
+    /// Adds message and enum/value-description definitions from a DBC string.
     ///
     /// This method parses DBC content from a string slice and adds all message
     /// definitions to the parser. If a message ID already exists, it will be
-    /// overwritten and a warning will be logged.
+    /// overwritten and a warning will be logged. Signal value descriptions
+    /// (enumerations) are also captured for enum decoding.
     ///
     /// # Arguments
     ///
@@ -333,7 +343,7 @@ impl Parser {
     ///
     /// Takes a CAN message ID and raw data bytes, then decodes all signals
     /// according to the DBC definitions. Each signal is extracted, scaled,
-    /// and converted to its physical value.
+    /// and converted to its physical value or enum label (if defined).
     ///
     /// # Arguments
     ///
@@ -407,7 +417,8 @@ impl Parser {
     /// Decodes a single signal from raw CAN data.
     ///
     /// Extracts the raw bits for a signal, converts to signed/unsigned as needed,
-    /// and applies the scaling factor and offset to produce the physical value.
+    /// and then either resolves a DBC enum label or applies scaling/offset to
+    /// produce a numeric physical value.
     fn decode_signal(
         &self,
         msg_id: u32,
@@ -889,7 +900,7 @@ impl Parser {
     /// Clears all loaded message definitions.
     ///
     /// After calling this method, the parser will have no message definitions
-    /// and will need to reload DBC files.
+    /// or enum/value-description mappings and will need to reload DBC files.
     ///
     /// # Example
     ///
@@ -901,6 +912,7 @@ impl Parser {
     /// ```
     pub fn clear(&mut self) {
         self.msg_defs.clear();
+        self.enum_defs.clear();
     }
 }
 
