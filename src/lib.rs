@@ -135,6 +135,11 @@ pub struct DecodedSignal {
     pub unit: String,
 }
 
+pub struct EnumDef {
+    pub signal_name: String,
+    pub enum_map: std::collections::HashMap<i64, String>,
+}
+
 /// A CAN message parser that uses DBC file definitions.
 ///
 /// The parser loads message and signal definitions from DBC files and uses them
@@ -161,6 +166,8 @@ pub struct DecodedSignal {
 pub struct Parser {
     /// Map of message ID to message definitions
     msg_defs: std::collections::HashMap<u32, can_dbc::Message>,
+
+    enum_defs: std::collections::HashMap<u32, Vec<EnumDef>>,
 }
 
 impl Parser {
@@ -179,6 +186,7 @@ impl Parser {
     pub fn new() -> Self {
         Self {
             msg_defs: std::collections::HashMap::new(),
+            enum_defs: std::collections::HashMap::new(),
         }
     }
 
@@ -244,10 +252,7 @@ impl Parser {
             format!("{:?}", e)
         })?;
         for msg_def in dbc.messages {
-            let msg_id = match msg_def.id {
-                can_dbc::MessageId::Standard(id) => id as u32,
-                can_dbc::MessageId::Extended(id) => id,
-            };
+            let msg_id = msg_def.id.raw();
             if self.msg_defs.contains_key(&msg_id) {
                 log::warn!(
                     "Duplicate message ID {msg_id:#X} ({}). Overwriting existing definition.",
@@ -255,6 +260,26 @@ impl Parser {
                 );
             }
             self.msg_defs.insert(msg_id, msg_def.clone());
+        }
+        for val_desc in dbc.value_descriptions {
+            match val_desc {
+                can_dbc::ValueDescription::Signal {
+                    message_id,
+                    name,
+                    value_descriptions,
+                } => {
+                    let msg_id = message_id.raw();
+                    let enum_def = EnumDef {
+                        signal_name: name.clone(),
+                        enum_map: value_descriptions
+                            .iter()
+                            .map(|vd| (vd.id, vd.description.clone()))
+                            .collect(),
+                    };
+                    self.enum_defs.entry(msg_id).or_default().push(enum_def);
+                }
+                can_dbc::ValueDescription::EnvironmentVariable { .. } => {}
+            }
         }
         Ok(())
     }
