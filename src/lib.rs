@@ -295,7 +295,21 @@ impl Parser {
                             .map(|vd| (vd.id, vd.description.clone()))
                             .collect(),
                     };
-                    self.enum_defs.entry(msg_id).or_default().push(enum_def);
+                    let entry = self.enum_defs.entry(msg_id).or_default();
+                    if let Some(existing) = entry
+                        .iter_mut()
+                        .find(|e| e.signal_name == enum_def.signal_name)
+                    {
+                        *existing = enum_def;
+                        log::warn!(
+                            "Duplicate value description for signal '{}' in message ID {:#X}. \
+                            Overwriting existing enum definition.",
+                            name,
+                            msg_id
+                        );
+                    } else {
+                        entry.push(enum_def);
+                    }
                 }
                 can_dbc::ValueDescription::EnvironmentVariable { .. } => {}
             }
