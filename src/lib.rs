@@ -125,8 +125,8 @@ pub struct DecodedMessage {
 pub enum DecodedSignalValue {
     /// The physical value after applying factor and offset
     Numeric(f64),
-    /// The string value for an enumerated signal (if defined in the DBC)
-    Enum(String),
+    /// The raw value and the string value for an enumerated signal (if defined in the DBC)
+    Enum(i64, String),
 }
 
 /// A decoded signal with its physical value.
@@ -464,7 +464,7 @@ impl Parser {
         if let Some(enum_str) = enum_name {
             Some(DecodedSignal {
                 name: signal_def.name.clone(),
-                value: DecodedSignalValue::Enum(enum_str),
+                value: DecodedSignalValue::Enum(raw_value_with_sign, enum_str),
                 unit: signal_def.unit.clone(),
             })
         } else {
