@@ -138,7 +138,7 @@ pub enum DecodedSignalValue {
 pub struct DecodedSignal {
     /// The name of the signal as defined in the DBC file
     pub name: String,
-    /// The physical value after applying factor and offset
+    /// The decoded value, either a numeric physical value or an enum label
     pub value: DecodedSignalValue,
     /// The unit of measurement (e.g., "km/h", "°C", "RPM")
     pub unit: String,
