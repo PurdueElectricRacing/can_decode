@@ -528,24 +528,40 @@ impl Parser {
                     .map(|f| &f.float_def)
             }) {
                 // Interpret raw bits as float according to the definition
-                let float_value = match float_def {
+                let float_value: Option<f64> = match float_def {
                     can_dbc::SignalExtendedValueType::IEEEfloat32Bit => {
                         let bytes = raw_value.to_le_bytes();
-                        f32::from_le_bytes(bytes[0..4].try_into().unwrap()) as f64
+                        match bytes.get(0..4).and_then(|b| b.try_into().ok()) {
+                            Some(arr) => Some(f32::from_le_bytes(arr) as f64),
+                            None => {
+                                log::warn!("Failed to convert raw_value to f32");
+                                None
+                            }
+                        }
                     }
                     can_dbc::SignalExtendedValueType::IEEEdouble64bit => {
                         let bytes = raw_value.to_le_bytes();
-                        f64::from_le_bytes(bytes[0..8].try_into().unwrap())
+                        match bytes.get(0..8).and_then(|b| b.try_into().ok()) {
+                            Some(arr) => Some(f64::from_le_bytes(arr)),
+                            None => {
+                                log::warn!("Failed to convert raw_value to f64");
+                                None
+                            }
+                        }
                     }
                     _ => {
-                        unreachable!()
+                        unreachable!(
+                            "SignedOrUnsignedInteger should be filtered out when loading float defs"
+                        )
                     }
                 };
-                return Some(DecodedSignal {
-                    name: signal_def.name.clone(),
-                    value: DecodedSignalValue::Numeric(float_value),
-                    unit: signal_def.unit.clone(),
-                });
+                if let Some(float_value) = float_value {
+                    return Some(DecodedSignal {
+                        name: signal_def.name.clone(),
+                        value: DecodedSignalValue::Numeric(float_value),
+                        unit: signal_def.unit.clone(),
+                    });
+                }
             }
 
             // Apply scaling
