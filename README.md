@@ -32,7 +32,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 	if let Some(decoded) = parser.decode_msg(msg_id, &data) {
 		println!("Message: {}", decoded.name);
 		for (signal_name, signal) in &decoded.signals {
-			println!("  {}: {} {}", signal_name, signal.value, signal.unit);
+			println!("  {}: {:?} {}", signal_name, signal.value, signal.unit);
 		}
 	}
 	Ok(())
@@ -65,7 +65,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 	}
 	Ok(())
 }
-````
+```
 
 ## Installation
 
@@ -73,5 +73,5 @@ Add the following to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-can_decode = "0.4"
+can_decode = "0.6.1"
 ```
