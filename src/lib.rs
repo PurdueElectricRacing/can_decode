@@ -10,7 +10,7 @@
 //! - Support for both standard and extended CAN IDs
 //! - Handle big-endian and little-endian byte ordering
 //! - Support for signed and unsigned signal values
-//! - Decode IEEE-754 float signals (`SIG_VALTYPE_`) as `f32`/`f64`
+//! - Decode/encode IEEE-754 float signals (`SIG_VALTYPE_`) as `f32`/`f64`
 //! - Apply scaling factors and offsets (and inverse for encoding)
 //!
 //! ## Decoding Example
@@ -716,7 +716,7 @@ impl Parser {
 
             // encode_signal() modifies the data buffer in place
             if self
-                .encode_signal(signal_def, physical_value, &mut data)
+                .encode_signal(msg_id, signal_def, physical_value, &mut data)
                 .is_none()
             {
                 log::error!(
@@ -787,10 +787,38 @@ impl Parser {
     /// the appropriate integer representation, and packs the bits into the data buffer.
     fn encode_signal(
         &self,
+        msg_id: u32,
         signal_def: &can_dbc::Signal,
         physical_value: f64,
         data: &mut [u8],
     ) -> Option<()> {
+        if let Some(float_def) = self.float_defs.get(&msg_id).and_then(|floats| {
+            floats
+                .iter()
+                .find(|f| f.signal_name == signal_def.name)
+                .map(|f| &f.float_def)
+        }) {
+            let raw_int = match float_def {
+                can_dbc::SignalExtendedValueType::IEEEfloat32Bit => {
+                    (physical_value as f32).to_bits() as u64
+                }
+                can_dbc::SignalExtendedValueType::IEEEdouble64bit => physical_value.to_bits(),
+                _ => {
+                    unreachable!(
+                        "SignedOrUnsignedInteger should be filtered out when loading float defs"
+                    )
+                }
+            };
+
+            return self.insert_signal_value(
+                data,
+                signal_def.start_bit as usize,
+                signal_def.size as usize,
+                signal_def.byte_order,
+                raw_int,
+            );
+        }
+
         // Apply inverse scaling: raw = (physical - offset) / factor
         let raw_value = (physical_value - signal_def.offset) / signal_def.factor;
 
