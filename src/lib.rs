@@ -813,9 +813,31 @@ impl Parser {
         }) {
             let raw_int = match float_def {
                 can_dbc::SignalExtendedValueType::IEEEfloat32Bit => {
+                    if signal_def.size != 32 {
+                        log::warn!(
+                            "Signal {} marked as f32 but size is {} bits",
+                            signal_def.name,
+                            signal_def.size
+                        );
+                        return None;
+                    }
+
                     (physical_value as f32).to_bits() as u64
                 }
-                can_dbc::SignalExtendedValueType::IEEEdouble64bit => physical_value.to_bits(),
+
+                can_dbc::SignalExtendedValueType::IEEEdouble64bit => {
+                    if signal_def.size != 64 {
+                        log::warn!(
+                            "Signal {} marked as f64 but size is {} bits",
+                            signal_def.name,
+                            signal_def.size
+                        );
+                        return None;
+                    }
+
+                    physical_value.to_bits()
+                }
+
                 _ => {
                     unreachable!(
                         "SignedOrUnsignedInteger should be filtered out when loading float defs"
