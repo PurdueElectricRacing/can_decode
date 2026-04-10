@@ -157,6 +157,12 @@ pub struct EnumDef {
     pub enum_map: std::collections::HashMap<i64, String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct FloatDef {
+    pub signal_name: String,
+    pub float_def: can_dbc::SignalExtendedValueType,
+}
+
 /// A CAN message parser that uses DBC file definitions.
 ///
 /// The parser loads message and signal definitions from DBC files and uses them
@@ -186,6 +192,8 @@ pub struct Parser {
 
     /// Map of message ID to per-signal enum/value-description mappings.
     enum_defs: std::collections::HashMap<u32, Vec<EnumDef>>,
+
+    float_defs: std::collections::HashMap<u32, Vec<FloatDef>>,
 }
 
 impl Parser {
@@ -205,6 +213,7 @@ impl Parser {
         Self {
             msg_defs: std::collections::HashMap::new(),
             enum_defs: std::collections::HashMap::new(),
+            float_defs: std::collections::HashMap::new(),
         }
     }
 
@@ -312,6 +321,34 @@ impl Parser {
                     }
                 }
                 can_dbc::ValueDescription::EnvironmentVariable { .. } => {}
+            }
+        }
+        for sig_ext_val_typ in dbc.signal_extended_value_type_list {
+            if sig_ext_val_typ.signal_extended_value_type
+                == can_dbc::SignalExtendedValueType::SignedOrUnsignedInteger
+            {
+                continue;
+            }
+
+            let msg_id = sig_ext_val_typ.message_id.raw();
+            let float_def = FloatDef {
+                signal_name: sig_ext_val_typ.signal_name.clone(),
+                float_def: sig_ext_val_typ.signal_extended_value_type,
+            };
+            let entry = self.float_defs.entry(msg_id).or_default();
+            if let Some(existing) = entry
+                .iter_mut()
+                .find(|e| e.signal_name == float_def.signal_name)
+            {
+                *existing = float_def.clone();
+                log::warn!(
+                    "Duplicate float definition for signal '{}' in message ID {:#X}. \
+                    Overwriting existing float definition.",
+                    float_def.signal_name,
+                    msg_id
+                );
+            } else {
+                entry.push(float_def);
             }
         }
         Ok(())
@@ -483,6 +520,34 @@ impl Parser {
                 unit: signal_def.unit.clone(),
             })
         } else {
+            // Check for float definition
+            if let Some(float_def) = self.float_defs.get(&msg_id).and_then(|floats| {
+                floats
+                    .iter()
+                    .find(|f| f.signal_name == signal_def.name)
+                    .map(|f| &f.float_def)
+            }) {
+                // Interpret raw bits as float according to the definition
+                let float_value = match float_def {
+                    can_dbc::SignalExtendedValueType::IEEEfloat32Bit => {
+                        let bytes = raw_value.to_le_bytes();
+                        f32::from_le_bytes(bytes[0..4].try_into().unwrap()) as f64
+                    }
+                    can_dbc::SignalExtendedValueType::IEEEdouble64bit => {
+                        let bytes = raw_value.to_le_bytes();
+                        f64::from_le_bytes(bytes[0..8].try_into().unwrap())
+                    }
+                    _ => {
+                        unreachable!()
+                    }
+                };
+                return Some(DecodedSignal {
+                    name: signal_def.name.clone(),
+                    value: DecodedSignalValue::Numeric(float_value),
+                    unit: signal_def.unit.clone(),
+                });
+            }
+
             // Apply scaling
             let scaled_value = raw_value_with_sign as f64 * signal_def.factor + signal_def.offset;
 
