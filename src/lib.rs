@@ -540,25 +540,31 @@ impl Parser {
                 // Interpret raw bits as float according to the definition
                 let float_value: Option<f64> = match float_def {
                     can_dbc::SignalExtendedValueType::IEEEfloat32Bit => {
-                        let bytes = raw_value.to_le_bytes();
-                        match bytes.get(0..4).and_then(|b| b.try_into().ok()) {
-                            Some(arr) => Some(f32::from_le_bytes(arr) as f64),
-                            None => {
-                                log::warn!("Failed to convert raw_value to f32");
-                                None
-                            }
+                        if signal_def.size != 32 {
+                            log::warn!(
+                                "Signal {} marked as f32 but size is {} bits",
+                                signal_def.name,
+                                signal_def.size
+                            );
+                            return None;
                         }
+
+                        Some(f32::from_bits(raw_value as u32) as f64)
                     }
+
                     can_dbc::SignalExtendedValueType::IEEEdouble64bit => {
-                        let bytes = raw_value.to_le_bytes();
-                        match bytes.get(0..8).and_then(|b| b.try_into().ok()) {
-                            Some(arr) => Some(f64::from_le_bytes(arr)),
-                            None => {
-                                log::warn!("Failed to convert raw_value to f64");
-                                None
-                            }
+                        if signal_def.size != 64 {
+                            log::warn!(
+                                "Signal {} marked as f64 but size is {} bits",
+                                signal_def.name,
+                                signal_def.size
+                            );
+                            return None;
                         }
+
+                        Some(f64::from_bits(raw_value))
                     }
+
                     _ => {
                         unreachable!(
                             "SignedOrUnsignedInteger should be filtered out when loading float defs"
