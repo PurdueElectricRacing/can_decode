@@ -1009,6 +1009,7 @@ impl Parser {
     pub fn clear(&mut self) {
         self.msg_defs.clear();
         self.enum_defs.clear();
+        self.float_defs.clear();
     }
 }
 
