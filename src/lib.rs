@@ -10,6 +10,7 @@
 //! - Support for both standard and extended CAN IDs
 //! - Handle big-endian and little-endian byte ordering
 //! - Support for signed and unsigned signal values
+//! - Decode IEEE-754 float signals (`SIG_VALTYPE_`) as `f32`/`f64`
 //! - Apply scaling factors and offsets (and inverse for encoding)
 //!
 //! ## Decoding Example
@@ -123,7 +124,11 @@ pub struct DecodedMessage {
 
 #[derive(Debug, Clone)]
 pub enum DecodedSignalValue {
-    /// The physical value after applying factor and offset
+    /// Numeric signal value.
+    ///
+    /// For integer-backed signals this is the physical value after applying
+    /// factor and offset. For IEEE float/double signals (`SIG_VALTYPE_`) this
+    /// is the decoded floating-point value directly from the raw bits.
     Numeric(f64),
     /// The raw value and the string value for an enumerated signal (if defined in the DBC)
     Enum(i64, String),
@@ -159,7 +164,9 @@ pub struct EnumDef {
 
 #[derive(Debug, Clone)]
 pub struct FloatDef {
+    /// Signal name this float-type definition belongs to.
     pub signal_name: String,
+    /// The DBC extended value type (`IEEEfloat32Bit` or `IEEEdouble64bit`).
     pub float_def: can_dbc::SignalExtendedValueType,
 }
 
@@ -193,6 +200,7 @@ pub struct Parser {
     /// Map of message ID to per-signal enum/value-description mappings.
     enum_defs: std::collections::HashMap<u32, Vec<EnumDef>>,
 
+    /// Map of message ID to per-signal IEEE float/double definitions.
     float_defs: std::collections::HashMap<u32, Vec<FloatDef>>,
 }
 
@@ -252,7 +260,8 @@ impl Parser {
     /// This method parses DBC content from a string slice and adds all message
     /// definitions to the parser. If a message ID already exists, it will be
     /// overwritten and a warning will be logged. Signal value descriptions
-    /// (enumerations) are also captured for enum decoding.
+    /// (enumerations) are also captured for enum decoding. Signal extended
+    /// value types (`SIG_VALTYPE_`) are captured for IEEE float/double decoding.
     ///
     /// # Arguments
     ///
@@ -470,7 +479,8 @@ impl Parser {
     ///
     /// Extracts the raw bits for a signal, converts to signed/unsigned as needed,
     /// and then either resolves a DBC enum label or applies scaling/offset to
-    /// produce a numeric physical value.
+    /// produce a numeric physical value. If `SIG_VALTYPE_` marks the signal as
+    /// IEEE float/double, raw bits are interpreted directly as `f32`/`f64`.
     fn decode_signal(
         &self,
         msg_id: u32,
@@ -996,7 +1006,7 @@ impl Parser {
     /// Clears all loaded message definitions.
     ///
     /// After calling this method, the parser will have no message definitions
-    /// or enum/value-description mappings and will need to reload DBC files.
+    /// or signal mappings (enum/value-description and float type mappings).
     ///
     /// # Example
     ///
