@@ -549,6 +549,11 @@ impl Parser {
                 let mut bit_in_byte = start_bit_in_byte as i32; // Counts down within byte
 
                 for _i in 0..size {
+                    if byte_idx >= data.len() {
+                        // Out of bounds: should not be considered a successful decode
+                        return None;
+                    }
+
                     let bit_val = (data[byte_idx] >> bit_in_byte) & 1;
                     result = (result << 1) | (bit_val as u64);
 
