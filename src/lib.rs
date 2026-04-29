@@ -509,11 +509,6 @@ impl Parser {
             return None;
         }
 
-        let total_bits = data.len() * 8;
-        if start_bit + size > total_bits {
-            return None;
-        }
-
         let mut result = 0u64;
 
         match byte_order {
@@ -525,7 +520,12 @@ impl Parser {
                 let mut current_byte = start_byte;
                 let mut bit_offset = start_bit_in_byte;
 
-                while remaining_bits > 0 && current_byte < data.len() {
+                while remaining_bits > 0 {
+                    if current_byte >= data.len() {
+                        // Out of bounds: should not be considered a successful decode
+                        return None;
+                    }
+
                     let bits_in_this_byte = std::cmp::min(remaining_bits, 8 - bit_offset);
                     let mask = low_bits_mask!(bits_in_this_byte, u64) << bit_offset;
                     let byte_value = ((data[current_byte] as u64) & mask) >> bit_offset;
@@ -538,23 +538,30 @@ impl Parser {
                 }
             }
             can_dbc::ByteOrder::BigEndian => {
-                // Big-endian (Motorola) bit extraction: iterate bits from
-                // start_bit toward higher bit positions, collecting each bit
-                // and appending into the result MSB-first.
-                let mut bit_pos = start_bit;
+                // start_bit is the MSB position in DBC sawtooth numbering
+                // byte_idx = start_bit / 8, bit_in_byte = start_bit % 8 (counts from LSB of byte)
+                // Actual bit position within the byte = bit_in_byte (7=MSB, 0=LSB)
 
-                for _ in 0..size {
-                    let byte_idx = bit_pos / 8;
-                    let bit_idx = 7 - (bit_pos % 8);
+                let start_byte = start_bit / 8;
+                let start_bit_in_byte = start_bit % 8; // Physical bit index
 
+                let mut byte_idx = start_byte;
+                let mut bit_in_byte = start_bit_in_byte as i32; // Counts down within byte
+
+                for _i in 0..size {
                     if byte_idx >= data.len() {
-                        break;
+                        // Out of bounds: should not be considered a successful decode
+                        return None;
                     }
 
-                    let bit_val = (data[byte_idx] >> bit_idx) & 1;
+                    let bit_val = (data[byte_idx] >> bit_in_byte) & 1;
                     result = (result << 1) | (bit_val as u64);
 
-                    bit_pos += 1;
+                    bit_in_byte -= 1;
+                    if bit_in_byte < 0 {
+                        bit_in_byte = 7;
+                        byte_idx += 1;
+                    }
                 }
             }
         }
@@ -792,27 +799,26 @@ impl Parser {
                 }
             }
             can_dbc::ByteOrder::BigEndian => {
-                // Big-endian (Motorola) bit insertion: iterate bits from
-                // start_bit toward higher bit positions, extracting each bit
-                // from value MSB-first.
-                let mut bit_pos = start_bit;
+                let start_byte = start_bit / 8;
+                let start_bit_in_byte = start_bit % 8;
+
+                let mut byte_idx = start_byte;
+                let mut bit_in_byte = start_bit_in_byte as i32;
 
                 for i in 0..size {
-                    let byte_idx = bit_pos / 8;
-                    let bit_idx = 7 - (bit_pos % 8);
-
                     if byte_idx >= data.len() {
-                        break;
+                        return None;
                     }
 
-                    // Extract bit from value (MSB first)
                     let bit_val = ((value >> (size - 1 - i)) & 1) as u8;
+                    let mask = 1u8 << bit_in_byte;
+                    data[byte_idx] = (data[byte_idx] & !mask) | (bit_val << bit_in_byte);
 
-                    // Clear the bit and set new value
-                    let mask = 1u8 << bit_idx;
-                    data[byte_idx] = (data[byte_idx] & !mask) | ((bit_val << bit_idx) & mask);
-
-                    bit_pos += 1;
+                    bit_in_byte -= 1;
+                    if bit_in_byte < 0 {
+                        bit_in_byte = 7;
+                        byte_idx += 1;
+                    }
                 }
             }
         }
