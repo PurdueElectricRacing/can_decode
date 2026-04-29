@@ -538,23 +538,25 @@ impl Parser {
                 }
             }
             can_dbc::ByteOrder::BigEndian => {
-                // Big-endian (Motorola) bit extraction: iterate bits from
-                // start_bit toward higher bit positions, collecting each bit
-                // and appending into the result MSB-first.
-                let mut bit_pos = start_bit;
+                // start_bit is the MSB position in DBC sawtooth numbering
+                // byte_idx = start_bit / 8, bit_in_byte = start_bit % 8 (counts from LSB of byte)
+                // Actual bit position within the byte = bit_in_byte (7=MSB, 0=LSB)
 
-                for _ in 0..size {
-                    let byte_idx = bit_pos / 8;
-                    let bit_idx = 7 - (bit_pos % 8);
+                let start_byte = start_bit / 8;
+                let start_bit_in_byte = start_bit % 8; // Physical bit index
 
-                    if byte_idx >= data.len() {
-                        break;
-                    }
+                let mut byte_idx = start_byte;
+                let mut bit_in_byte = start_bit_in_byte as i32; // Counts down within byte
 
-                    let bit_val = (data[byte_idx] >> bit_idx) & 1;
+                for _i in 0..size {
+                    let bit_val = (data[byte_idx] >> bit_in_byte) & 1;
                     result = (result << 1) | (bit_val as u64);
 
-                    bit_pos += 1;
+                    bit_in_byte -= 1;
+                    if bit_in_byte < 0 {
+                        bit_in_byte = 7;
+                        byte_idx += 1;
+                    }
                 }
             }
         }
