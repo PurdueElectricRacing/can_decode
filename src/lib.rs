@@ -520,7 +520,12 @@ impl Parser {
                 let mut current_byte = start_byte;
                 let mut bit_offset = start_bit_in_byte;
 
-                while remaining_bits > 0 && current_byte < data.len() {
+                while remaining_bits > 0 {
+                    if current_byte >= data.len() {
+                        // Out of bounds: should not be considered a successful decode
+                        return None;
+                    }
+
                     let bits_in_this_byte = std::cmp::min(remaining_bits, 8 - bit_offset);
                     let mask = low_bits_mask!(bits_in_this_byte, u64) << bit_offset;
                     let byte_value = ((data[current_byte] as u64) & mask) >> bit_offset;
