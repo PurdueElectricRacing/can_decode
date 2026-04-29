@@ -509,11 +509,6 @@ impl Parser {
             return None;
         }
 
-        let total_bits = data.len() * 8;
-        if start_bit + size > total_bits {
-            return None;
-        }
-
         let mut result = 0u64;
 
         match byte_order {
