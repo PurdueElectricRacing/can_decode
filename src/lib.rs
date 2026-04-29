@@ -126,9 +126,8 @@ pub struct DecodedMessage {
 pub enum DecodedSignalValue {
     /// Numeric signal value.
     ///
-    /// For integer-backed signals this is the physical value after applying
-    /// factor and offset. For IEEE float/double signals (`SIG_VALTYPE_`) this
-    /// is the decoded floating-point value directly from the raw bits.
+    /// For integer or IEEE float/double backed signals this is the physical value
+    /// after applying factor and offset
     Numeric(f64),
     /// The raw value and the string value for an enumerated signal (if defined in the DBC)
     Enum(i64, String),
