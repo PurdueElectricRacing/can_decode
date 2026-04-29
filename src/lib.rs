@@ -799,27 +799,26 @@ impl Parser {
                 }
             }
             can_dbc::ByteOrder::BigEndian => {
-                // Big-endian (Motorola) bit insertion: iterate bits from
-                // start_bit toward higher bit positions, extracting each bit
-                // from value MSB-first.
-                let mut bit_pos = start_bit;
+                let start_byte = start_bit / 8;
+                let start_bit_in_byte = start_bit % 8;
+
+                let mut byte_idx = start_byte;
+                let mut bit_in_byte = start_bit_in_byte as i32;
 
                 for i in 0..size {
-                    let byte_idx = bit_pos / 8;
-                    let bit_idx = 7 - (bit_pos % 8);
-
                     if byte_idx >= data.len() {
-                        break;
+                        return None;
                     }
 
-                    // Extract bit from value (MSB first)
                     let bit_val = ((value >> (size - 1 - i)) & 1) as u8;
+                    let mask = 1u8 << bit_in_byte;
+                    data[byte_idx] = (data[byte_idx] & !mask) | (bit_val << bit_in_byte);
 
-                    // Clear the bit and set new value
-                    let mask = 1u8 << bit_idx;
-                    data[byte_idx] = (data[byte_idx] & !mask) | ((bit_val << bit_idx) & mask);
-
-                    bit_pos += 1;
+                    bit_in_byte -= 1;
+                    if bit_in_byte < 0 {
+                        bit_in_byte = 7;
+                        byte_idx += 1;
+                    }
                 }
             }
         }
