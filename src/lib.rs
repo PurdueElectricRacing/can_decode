@@ -571,9 +571,10 @@ impl Parser {
                     }
                 };
                 if let Some(float_value) = float_value {
+                    let scaled_value = float_value as f64 * signal_def.factor + signal_def.offset;
                     return Some(DecodedSignal {
                         name: signal_def.name.clone(),
-                        value: DecodedSignalValue::Numeric(float_value),
+                        value: DecodedSignalValue::Numeric(scaled_value),
                         unit: signal_def.unit.clone(),
                     });
                 }
