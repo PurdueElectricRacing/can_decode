@@ -797,10 +797,10 @@ impl Parser {
         msg_name: &str,
         signal_values: &std::collections::HashMap<String, f64>,
     ) -> Option<(u32, Vec<u8>)> {
-        let (msg_id, _msg_def) = self
-            .msg_defs
+        let (msg_id, _msg_entry) = self
+            .msg_entries
             .iter()
-            .find(|(_id, msg)| msg.name == msg_name)?;
+            .find(|(_id, entry)| entry.msg_def.name == msg_name)?;
 
         let data = self.encode_msg(*msg_id, signal_values)?;
         Some((*msg_id, data))
