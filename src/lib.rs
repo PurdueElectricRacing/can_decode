@@ -1065,7 +1065,7 @@ impl Parser {
     /// # }
     ///
     pub fn msg_def(&self, msg_id: u32) -> Option<&can_dbc::Message> {
-        self.msg_defs.get(&msg_id)
+        self.msg_entries.get(&msg_id).map(|entry| &entry.msg_def)
     }
 
     /// Clears all loaded message definitions.
