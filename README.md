@@ -13,6 +13,7 @@ Decode and encode CAN frames into messages/signals in a fast and easy way.
 - Support for both standard and extended CAN IDs
 - Handle big-endian and little-endian byte ordering
 - Support for signed and unsigned signal values
+- Decode/encode IEEE-754 float signals (`SIG_VALTYPE_`)
 - Apply scaling factors and offsets (and inverse for encoding)
 
 ## Decoding Example
@@ -32,7 +33,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 	if let Some(decoded) = parser.decode_msg(msg_id, &data) {
 		println!("Message: {}", decoded.name);
 		for (signal_name, signal) in &decoded.signals {
-			println!("  {}: {} {}", signal_name, signal.value, signal.unit);
+			println!("  {}: {:?} {}", signal_name, signal.value, signal.unit);
 		}
 	}
 	Ok(())
@@ -65,7 +66,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 	}
 	Ok(())
 }
-````
+```
 
 ## Installation
 
@@ -73,5 +74,5 @@ Add the following to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-can_decode = "0.6.1"
+can_decode = "0.6.2"
 ```

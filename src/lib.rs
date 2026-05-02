@@ -10,6 +10,7 @@
 //! - Support for both standard and extended CAN IDs
 //! - Handle big-endian and little-endian byte ordering
 //! - Support for signed and unsigned signal values
+//! - Decode/encode IEEE-754 float signals (`SIG_VALTYPE_`)
 //! - Apply scaling factors and offsets (and inverse for encoding)
 //!
 //! ## Decoding Example
@@ -123,7 +124,10 @@ pub struct DecodedMessage {
 
 #[derive(Debug, Clone)]
 pub enum DecodedSignalValue {
-    /// The physical value after applying factor and offset
+    /// Numeric signal value.
+    ///
+    /// For integer or IEEE float/double backed signals this is the physical value
+    /// after applying factor and offset
     Numeric(f64),
     /// The raw value and the string value for an enumerated signal (if defined in the DBC)
     Enum(i64, String),
@@ -157,6 +161,14 @@ pub struct EnumDef {
     pub enum_map: std::collections::HashMap<i64, String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct FloatDef {
+    /// Signal name this float-type definition belongs to.
+    pub signal_name: String,
+    /// The DBC extended value type (`IEEEfloat32Bit` or `IEEEdouble64bit`).
+    pub float_def: can_dbc::SignalExtendedValueType,
+}
+
 /// A CAN message parser that uses DBC file definitions.
 ///
 /// The parser loads message and signal definitions from DBC files and uses them
@@ -186,6 +198,9 @@ pub struct Parser {
 
     /// Map of message ID to per-signal enum/value-description mappings.
     enum_defs: std::collections::HashMap<u32, Vec<EnumDef>>,
+
+    /// Map of message ID to per-signal IEEE float/double definitions.
+    float_defs: std::collections::HashMap<u32, Vec<FloatDef>>,
 }
 
 impl Parser {
@@ -205,6 +220,7 @@ impl Parser {
         Self {
             msg_defs: std::collections::HashMap::new(),
             enum_defs: std::collections::HashMap::new(),
+            float_defs: std::collections::HashMap::new(),
         }
     }
 
@@ -243,7 +259,8 @@ impl Parser {
     /// This method parses DBC content from a string slice and adds all message
     /// definitions to the parser. If a message ID already exists, it will be
     /// overwritten and a warning will be logged. Signal value descriptions
-    /// (enumerations) are also captured for enum decoding.
+    /// (enumerations) are also captured for enum decoding. Signal extended
+    /// value types (`SIG_VALTYPE_`) are captured for IEEE float/double decoding.
     ///
     /// # Arguments
     ///
@@ -312,6 +329,34 @@ impl Parser {
                     }
                 }
                 can_dbc::ValueDescription::EnvironmentVariable { .. } => {}
+            }
+        }
+        for sig_ext_val_typ in dbc.signal_extended_value_type_list {
+            if sig_ext_val_typ.signal_extended_value_type
+                == can_dbc::SignalExtendedValueType::SignedOrUnsignedInteger
+            {
+                continue;
+            }
+
+            let msg_id = sig_ext_val_typ.message_id.raw();
+            let float_def = FloatDef {
+                signal_name: sig_ext_val_typ.signal_name.clone(),
+                float_def: sig_ext_val_typ.signal_extended_value_type,
+            };
+            let entry = self.float_defs.entry(msg_id).or_default();
+            if let Some(existing) = entry
+                .iter_mut()
+                .find(|e| e.signal_name == float_def.signal_name)
+            {
+                *existing = float_def.clone();
+                log::warn!(
+                    "Duplicate float definition for signal '{}' in message ID {:#X}. \
+                    Overwriting existing float definition.",
+                    float_def.signal_name,
+                    msg_id
+                );
+            } else {
+                entry.push(float_def);
             }
         }
         Ok(())
@@ -433,7 +478,8 @@ impl Parser {
     ///
     /// Extracts the raw bits for a signal, converts to signed/unsigned as needed,
     /// and then either resolves a DBC enum label or applies scaling/offset to
-    /// produce a numeric physical value.
+    /// produce a numeric physical value. If `SIG_VALTYPE_` marks the signal as
+    /// IEEE float/double, raw bits are interpreted directly as `f32`/`f64`.
     fn decode_signal(
         &self,
         msg_id: u32,
@@ -483,6 +529,57 @@ impl Parser {
                 unit: signal_def.unit.clone(),
             })
         } else {
+            // Check for float definition
+            if let Some(float_def) = self.float_defs.get(&msg_id).and_then(|floats| {
+                floats
+                    .iter()
+                    .find(|f| f.signal_name == signal_def.name)
+                    .map(|f| &f.float_def)
+            }) {
+                // Interpret raw bits as float according to the definition
+                let float_value: Option<f64> = match float_def {
+                    can_dbc::SignalExtendedValueType::IEEEfloat32Bit => {
+                        if signal_def.size != 32 {
+                            log::warn!(
+                                "Signal {} marked as f32 but size is {} bits",
+                                signal_def.name,
+                                signal_def.size
+                            );
+                            return None;
+                        }
+
+                        Some(f32::from_bits(raw_value as u32) as f64)
+                    }
+
+                    can_dbc::SignalExtendedValueType::IEEEdouble64bit => {
+                        if signal_def.size != 64 {
+                            log::warn!(
+                                "Signal {} marked as f64 but size is {} bits",
+                                signal_def.name,
+                                signal_def.size
+                            );
+                            return None;
+                        }
+
+                        Some(f64::from_bits(raw_value))
+                    }
+
+                    _ => {
+                        unreachable!(
+                            "SignedOrUnsignedInteger should be filtered out when loading float defs"
+                        )
+                    }
+                };
+                if let Some(float_value) = float_value {
+                    let scaled_value = float_value * signal_def.factor + signal_def.offset;
+                    return Some(DecodedSignal {
+                        name: signal_def.name.clone(),
+                        value: DecodedSignalValue::Numeric(scaled_value),
+                        unit: signal_def.unit.clone(),
+                    });
+                }
+            }
+
             // Apply scaling
             let scaled_value = raw_value_with_sign as f64 * signal_def.factor + signal_def.offset;
 
@@ -632,7 +729,7 @@ impl Parser {
 
             // encode_signal() modifies the data buffer in place
             if self
-                .encode_signal(signal_def, physical_value, &mut data)
+                .encode_signal(msg_id, signal_def, physical_value, &mut data)
                 .is_none()
             {
                 log::error!(
@@ -703,10 +800,60 @@ impl Parser {
     /// the appropriate integer representation, and packs the bits into the data buffer.
     fn encode_signal(
         &self,
+        msg_id: u32,
         signal_def: &can_dbc::Signal,
         physical_value: f64,
         data: &mut [u8],
     ) -> Option<()> {
+        if let Some(float_def) = self.float_defs.get(&msg_id).and_then(|floats| {
+            floats
+                .iter()
+                .find(|f| f.signal_name == signal_def.name)
+                .map(|f| &f.float_def)
+        }) {
+            let raw_int = match float_def {
+                can_dbc::SignalExtendedValueType::IEEEfloat32Bit => {
+                    if signal_def.size != 32 {
+                        log::warn!(
+                            "Signal {} marked as f32 but size is {} bits",
+                            signal_def.name,
+                            signal_def.size
+                        );
+                        return None;
+                    }
+
+                    (physical_value as f32).to_bits() as u64
+                }
+
+                can_dbc::SignalExtendedValueType::IEEEdouble64bit => {
+                    if signal_def.size != 64 {
+                        log::warn!(
+                            "Signal {} marked as f64 but size is {} bits",
+                            signal_def.name,
+                            signal_def.size
+                        );
+                        return None;
+                    }
+
+                    physical_value.to_bits()
+                }
+
+                _ => {
+                    unreachable!(
+                        "SignedOrUnsignedInteger should be filtered out when loading float defs"
+                    )
+                }
+            };
+
+            return self.insert_signal_value(
+                data,
+                signal_def.start_bit as usize,
+                signal_def.size as usize,
+                signal_def.byte_order,
+                raw_int,
+            );
+        }
+
         // Apply inverse scaling: raw = (physical - offset) / factor
         let raw_value = (physical_value - signal_def.offset) / signal_def.factor;
 
@@ -921,7 +1068,7 @@ impl Parser {
     /// Clears all loaded message definitions.
     ///
     /// After calling this method, the parser will have no message definitions
-    /// or enum/value-description mappings and will need to reload DBC files.
+    /// or signal mappings (enum/value-description and float type mappings).
     ///
     /// # Example
     ///
@@ -934,6 +1081,7 @@ impl Parser {
     pub fn clear(&mut self) {
         self.msg_defs.clear();
         self.enum_defs.clear();
+        self.float_defs.clear();
     }
 }
 
