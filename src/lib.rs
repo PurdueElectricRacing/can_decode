@@ -149,25 +149,54 @@ pub struct DecodedSignal {
     pub unit: String,
 }
 
-/// Value-description mapping for a specific signal.
-///
-/// DBC files can define enum-like value descriptions per signal, such as
-/// `0 = "Off"`, `1 = "On"`. This structure stores those mappings so decoded
-/// raw values can be returned as human-readable labels.
-#[derive(Debug, Clone)]
-pub struct EnumDef {
-    /// Signal name this value-description map belongs to.
-    pub signal_name: String,
-    /// Map from raw integer signal value to label.
-    pub enum_map: std::collections::HashMap<i64, String>,
+pub enum FloatFormat {
+    F32,
+    F64,
 }
 
-#[derive(Debug, Clone)]
-pub struct FloatDef {
-    /// Signal name this float-type definition belongs to.
-    pub signal_name: String,
-    /// The DBC extended value type (`IEEEfloat32Bit` or `IEEEdouble64bit`).
-    pub float_def: can_dbc::SignalExtendedValueType,
+impl FloatFormat  {
+    pub fn from_dbc_def(def: can_dbc::SignalExtendedValueType) -> Option<Self> {
+        match def {
+            can_dbc::SignalExtendedValueType::IEEEfloat32Bit => Some(FloatFormat::F32),
+            can_dbc::SignalExtendedValueType::IEEEdouble64bit => Some(FloatFormat::F64),
+            can_dbc::SignalExtendedValueType::SignedOrUnsignedInteger => None,
+        }
+    }
+}
+
+pub struct FormatDef {
+    pub enum_map: std::collections::HashMap<i64, String>,
+    pub float_format: Option<FloatFormat>,
+}
+
+impl FormatDef {
+    pub fn new_enum(enum_map: std::collections::HashMap<i64, String>) -> Self {
+        Self {
+            enum_map,
+            float_format: None,
+        }
+    }
+
+    pub fn new_float(float_format: FloatFormat) -> Self {
+        Self {
+            enum_map: std::collections::HashMap::new(),
+            float_format: Some(float_format),
+        }
+    }
+}
+
+pub struct MsgEntry {
+    pub msg_def: can_dbc::Message,
+    pub format_defs: std::collections::HashMap<String, FormatDef>, // signal name -> format definition
+}
+
+impl MsgEntry {
+    fn new(msg_def: can_dbc::Message) -> Self {
+        Self {
+            msg_def,
+            format_defs: std::collections::HashMap::new(),
+        }
+    }
 }
 
 /// A CAN message parser that uses DBC file definitions.
@@ -194,14 +223,7 @@ pub struct FloatDef {
 /// # }
 /// ```
 pub struct Parser {
-    /// Map of message ID to message definitions
-    msg_defs: std::collections::HashMap<u32, can_dbc::Message>,
-
-    /// Map of message ID to per-signal enum/value-description mappings.
-    enum_defs: std::collections::HashMap<u32, Vec<EnumDef>>,
-
-    /// Map of message ID to per-signal IEEE float/double definitions.
-    float_defs: std::collections::HashMap<u32, Vec<FloatDef>>,
+    msg_entries: std::collections::HashMap<u32, MsgEntry>,
 }
 
 impl Parser {
@@ -219,9 +241,7 @@ impl Parser {
     /// ```
     pub fn new() -> Self {
         Self {
-            msg_defs: std::collections::HashMap::new(),
-            enum_defs: std::collections::HashMap::new(),
-            float_defs: std::collections::HashMap::new(),
+            msg_entries: std::collections::HashMap::new(),
         }
     }
 
@@ -290,35 +310,31 @@ impl Parser {
         })?;
         for msg_def in dbc.messages {
             let msg_id = msg_def.id.raw();
-            if self.msg_defs.contains_key(&msg_id) {
+            if self.msg_entries.contains_key(&msg_id) {
                 log::warn!(
                     "Duplicate message ID {msg_id:#X} ({}). Overwriting existing definition.",
                     msg_def.name
                 );
             }
-            self.msg_defs.insert(msg_id, msg_def.clone());
+            self.msg_entries.insert(msg_id, MsgEntry::new(msg_def));
         }
         for val_desc in dbc.value_descriptions {
-            match val_desc {
-                can_dbc::ValueDescription::Signal {
-                    message_id,
-                    name,
-                    value_descriptions,
-                } => {
-                    let msg_id = message_id.raw();
-                    let enum_def = EnumDef {
-                        signal_name: name.clone(),
-                        enum_map: value_descriptions
-                            .iter()
-                            .map(|vd| (vd.id, vd.description.clone()))
-                            .collect(),
-                    };
-                    let entry = self.enum_defs.entry(msg_id).or_default();
-                    if let Some(existing) = entry
-                        .iter_mut()
-                        .find(|e| e.signal_name == enum_def.signal_name)
-                    {
-                        *existing = enum_def;
+            if let can_dbc::ValueDescription::Signal {
+                message_id,
+                name,
+                value_descriptions,
+            } = val_desc
+            {
+                let msg_id = message_id.raw();
+                let enum_def = FormatDef::new_enum(
+                    value_descriptions
+                        .iter()
+                        .map(|vd| (vd.id, vd.description.clone()))
+                        .collect(),
+                );
+                if let Some(msg_entry) = self.msg_entries.get_mut(&msg_id) {
+                    if let Some(existing) = msg_entry.format_defs.get_mut(&name) {
+                        existing.enum_map = enum_def.enum_map;
                         log::warn!(
                             "Duplicate value description for signal '{}' in message ID {:#X}. \
                             Overwriting existing enum definition.",
@@ -326,38 +342,44 @@ impl Parser {
                             msg_id
                         );
                     } else {
-                        entry.push(enum_def);
+                        msg_entry.format_defs.insert(name.clone(), enum_def);
                     }
+                } else {
+                    log::warn!(
+                        "Value description for signal '{}' references unknown message ID {:#X}. \
+                        Skipping.",
+                        name,
+                        msg_id
+                    );
                 }
-                can_dbc::ValueDescription::EnvironmentVariable { .. } => {}
             }
         }
         for sig_ext_val_typ in dbc.signal_extended_value_type_list {
-            if sig_ext_val_typ.signal_extended_value_type
-                == can_dbc::SignalExtendedValueType::SignedOrUnsignedInteger
+            if let Some(float_format) =
+                FloatFormat::from_dbc_def(sig_ext_val_typ.signal_extended_value_type)
             {
-                continue;
-            }
-
-            let msg_id = sig_ext_val_typ.message_id.raw();
-            let float_def = FloatDef {
-                signal_name: sig_ext_val_typ.signal_name.clone(),
-                float_def: sig_ext_val_typ.signal_extended_value_type,
-            };
-            let entry = self.float_defs.entry(msg_id).or_default();
-            if let Some(existing) = entry
-                .iter_mut()
-                .find(|e| e.signal_name == float_def.signal_name)
-            {
-                *existing = float_def.clone();
-                log::warn!(
-                    "Duplicate float definition for signal '{}' in message ID {:#X}. \
-                    Overwriting existing float definition.",
-                    float_def.signal_name,
-                    msg_id
-                );
-            } else {
-                entry.push(float_def);
+                let msg_id = sig_ext_val_typ.message_id.raw();
+                let format_def = FormatDef::new_float(float_format);
+                if let Some(msg_entry) = self.msg_entries.get_mut(&msg_id) {
+                    if let Some(existing) = msg_entry.format_defs.get_mut(&sig_ext_val_typ.signal_name) {
+                        existing.float_format = format_def.float_format;
+                        log::warn!(
+                            "Duplicate float definition for signal '{}' in message ID {:#X}. \
+                            Overwriting existing float definition.",
+                            sig_ext_val_typ.signal_name,
+                            msg_id
+                        );
+                    } else {
+                        msg_entry.format_defs.insert(sig_ext_val_typ.signal_name.clone(), format_def);
+                    }
+                } else {
+                    log::warn!(
+                        "Float definition for signal '{}' references unknown message ID {:#X}. \
+                        Skipping.",
+                        sig_ext_val_typ.signal_name,
+                        msg_id
+                    );
+                }
             }
         }
         Ok(())
