@@ -564,7 +564,7 @@ impl Parser {
             .and_then(|entry| entry.format_defs.get(&signal_def.name))
             .and_then(|format_def| format_def.float_format);
         if let Some(float_format) = float_def {
-            let float_value: Option<f64> = match float_format {
+            let float_value = match float_format {
                 FloatFormat::F32 => {
                     if signal_def.size != 32 {
                         log::warn!(
@@ -575,7 +575,7 @@ impl Parser {
                         return None;
                     }
 
-                    Some(f32::from_bits(raw_value as u32) as f64)
+                    f32::from_bits(raw_value as u32) as f64
                 }
 
                 FloatFormat::F64 => {
@@ -588,17 +588,15 @@ impl Parser {
                         return None;
                     }
 
-                    Some(f64::from_bits(raw_value))
+                    f64::from_bits(raw_value)
                 }
             };
-            if let Some(float_value) = float_value {
-                let scaled_value = float_value * signal_def.factor + signal_def.offset;
-                return Some(DecodedSignal {
-                    name: signal_def.name.clone(),
-                    value: DecodedSignalValue::Numeric(scaled_value),
-                    unit: signal_def.unit.clone(),
-                });
-            }
+            let scaled_value = float_value * signal_def.factor + signal_def.offset;
+            return Some(DecodedSignal {
+                name: signal_def.name.clone(),
+                value: DecodedSignalValue::Numeric(scaled_value),
+                unit: signal_def.unit.clone(),
+            });
         }
 
         // Not enum or float, signed/unsigned integer
