@@ -1032,7 +1032,10 @@ impl Parser {
     /// # }
     /// ```
     pub fn msg_defs(&self) -> Vec<can_dbc::Message> {
-        self.msg_defs.values().cloned().collect()
+        self.msg_entries
+            .values()
+            .map(|entry| entry.msg_def.clone())
+            .collect()
     }
 
     /// Returns the message definition for a given message ID.
