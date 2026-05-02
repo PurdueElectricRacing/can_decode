@@ -721,19 +721,19 @@ impl Parser {
         msg_id: u32,
         signal_values: &std::collections::HashMap<String, f64>,
     ) -> Option<Vec<u8>> {
-        let msg_def = self.msg_defs.get(&msg_id)?;
+        let msg_entry = self.msg_entries.get(&msg_id)?;
 
-        let msg_size = msg_def.size as usize;
+        let msg_size = msg_entry.msg_def.size as usize;
         let mut data = vec![0u8; msg_size];
 
-        for signal_def in &msg_def.signals {
+        for signal_def in &msg_entry.msg_def.signals {
             let physical_value = match signal_values.get(&signal_def.name) {
                 Some(&v) => v,
                 _ => {
                     log::error!(
                         "Signal {} not provided for message {} during encoding",
                         signal_def.name,
-                        msg_def.name
+                        msg_entry.msg_def.name
                     );
                     return None;
                 }
@@ -747,7 +747,7 @@ impl Parser {
                 log::error!(
                     "Failed to encode signal {} for message {}",
                     signal_def.name,
-                    msg_def.name
+                    msg_entry.msg_def.name
                 );
                 return None;
             }
