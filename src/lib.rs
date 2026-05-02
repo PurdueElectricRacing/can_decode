@@ -815,14 +815,16 @@ impl Parser {
         physical_value: f64,
         data: &mut [u8],
     ) -> Option<()> {
-        if let Some(float_def) = self.float_defs.get(&msg_id).and_then(|floats| {
-            floats
-                .iter()
-                .find(|f| f.signal_name == signal_def.name)
-                .map(|f| &f.float_def)
-        }) {
-            let raw_int = match float_def {
-                can_dbc::SignalExtendedValueType::IEEEfloat32Bit => {
+        let scaled_value = (physical_value - signal_def.offset) / signal_def.factor;
+
+        let float_def = self
+            .msg_entries
+            .get(&msg_id)
+            .and_then(|entry| entry.format_defs.get(&signal_def.name))
+            .and_then(|format_def| format_def.float_format);
+        if let Some(float_format) = float_def {
+            let float_data = match float_format {
+                FloatFormat::F32 => {
                     if signal_def.size != 32 {
                         log::warn!(
                             "Signal {} marked as f32 but size is {} bits",
@@ -831,11 +833,9 @@ impl Parser {
                         );
                         return None;
                     }
-
-                    (physical_value as f32).to_bits() as u64
+                    (scaled_value as f32).to_bits() as u64
                 }
-
-                can_dbc::SignalExtendedValueType::IEEEdouble64bit => {
+                FloatFormat::F64 => {
                     if signal_def.size != 64 {
                         log::warn!(
                             "Signal {} marked as f64 but size is {} bits",
@@ -844,34 +844,23 @@ impl Parser {
                         );
                         return None;
                     }
-
-                    physical_value.to_bits()
-                }
-
-                _ => {
-                    unreachable!(
-                        "SignedOrUnsignedInteger should be filtered out when loading float defs"
-                    )
+                    scaled_value.to_bits()
                 }
             };
-
             return self.insert_signal_value(
                 data,
                 signal_def.start_bit as usize,
                 signal_def.size as usize,
                 signal_def.byte_order,
-                raw_int,
+                float_data,
             );
         }
-
-        // Apply inverse scaling: raw = (physical - offset) / factor
-        let raw_value = (physical_value - signal_def.offset) / signal_def.factor;
 
         // Convert to integer and handle signed/unsigned
         let raw_int = if signal_def.value_type == can_dbc::ValueType::Signed {
             // Convert signed physical value to the integer representation
             // then to the unsigned bit pattern (two's complement).
-            let signed_val = raw_value.round() as i64;
+            let signed_val = scaled_value.round() as i64;
             // For an N-bit signed value the allowed signed range is
             // -(1 << (N-1)) .. (1 << (N-1)) - 1
             let max_value = (1i64 << (signal_def.size - 1)) - 1;
@@ -889,7 +878,7 @@ impl Parser {
             }
         } else {
             // Unsigned value
-            let unsigned_val = raw_value.round() as u64;
+            let unsigned_val = scaled_value.round() as u64;
             let max_value = low_bits_mask!(signal_def.size as usize, u64);
 
             // Clamp to valid range
