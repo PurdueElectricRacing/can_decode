@@ -165,7 +165,7 @@ impl FloatFormat {
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Clone)]
 
 pub struct FormatDef {
     pub enum_map: std::collections::HashMap<i64, String>,
