@@ -154,7 +154,7 @@ pub enum FloatFormat {
     F64,
 }
 
-impl FloatFormat  {
+impl FloatFormat {
     pub fn from_dbc_def(def: can_dbc::SignalExtendedValueType) -> Option<Self> {
         match def {
             can_dbc::SignalExtendedValueType::IEEEfloat32Bit => Some(FloatFormat::F32),
@@ -361,7 +361,9 @@ impl Parser {
                 let msg_id = sig_ext_val_typ.message_id.raw();
                 let format_def = FormatDef::new_float(float_format);
                 if let Some(msg_entry) = self.msg_entries.get_mut(&msg_id) {
-                    if let Some(existing) = msg_entry.format_defs.get_mut(&sig_ext_val_typ.signal_name) {
+                    if let Some(existing) =
+                        msg_entry.format_defs.get_mut(&sig_ext_val_typ.signal_name)
+                    {
                         existing.float_format = format_def.float_format;
                         log::warn!(
                             "Duplicate float definition for signal '{}' in message ID {:#X}. \
@@ -370,7 +372,9 @@ impl Parser {
                             msg_id
                         );
                     } else {
-                        msg_entry.format_defs.insert(sig_ext_val_typ.signal_name.clone(), format_def);
+                        msg_entry
+                            .format_defs
+                            .insert(sig_ext_val_typ.signal_name.clone(), format_def);
                     }
                 } else {
                     log::warn!(
