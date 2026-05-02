@@ -149,6 +149,7 @@ pub struct DecodedSignal {
     pub unit: String,
 }
 
+#[derive(Copy, Clone)]
 pub enum FloatFormat {
     F32,
     F64,
@@ -163,6 +164,8 @@ impl FloatFormat {
         }
     }
 }
+
+#[derive(Copy, Clone)]
 
 pub struct FormatDef {
     pub enum_map: std::collections::HashMap<i64, String>,
@@ -541,82 +544,70 @@ impl Parser {
 
         // Check if this signal has an enum definition
         let enum_name = self
-            .enum_defs
+            .msg_entries
             .get(&msg_id)
-            .and_then(|enums| {
-                enums
-                    .iter()
-                    .find(|e| e.signal_name == signal_def.name)
-                    .and_then(|e| e.enum_map.get(&raw_value_with_sign))
-            })
+            .and_then(|entry| entry.format_defs.get(&signal_def.name))
+            .and_then(|format_def| format_def.enum_map.get(&raw_value_with_sign))
             .cloned();
-
         if let Some(enum_str) = enum_name {
-            Some(DecodedSignal {
+            return Some(DecodedSignal {
                 name: signal_def.name.clone(),
                 value: DecodedSignalValue::Enum(raw_value_with_sign, enum_str),
                 unit: signal_def.unit.clone(),
-            })
-        } else {
-            // Check for float definition
-            if let Some(float_def) = self.float_defs.get(&msg_id).and_then(|floats| {
-                floats
-                    .iter()
-                    .find(|f| f.signal_name == signal_def.name)
-                    .map(|f| &f.float_def)
-            }) {
-                // Interpret raw bits as float according to the definition
-                let float_value: Option<f64> = match float_def {
-                    can_dbc::SignalExtendedValueType::IEEEfloat32Bit => {
-                        if signal_def.size != 32 {
-                            log::warn!(
-                                "Signal {} marked as f32 but size is {} bits",
-                                signal_def.name,
-                                signal_def.size
-                            );
-                            return None;
-                        }
-
-                        Some(f32::from_bits(raw_value as u32) as f64)
-                    }
-
-                    can_dbc::SignalExtendedValueType::IEEEdouble64bit => {
-                        if signal_def.size != 64 {
-                            log::warn!(
-                                "Signal {} marked as f64 but size is {} bits",
-                                signal_def.name,
-                                signal_def.size
-                            );
-                            return None;
-                        }
-
-                        Some(f64::from_bits(raw_value))
-                    }
-
-                    _ => {
-                        unreachable!(
-                            "SignedOrUnsignedInteger should be filtered out when loading float defs"
-                        )
-                    }
-                };
-                if let Some(float_value) = float_value {
-                    return Some(DecodedSignal {
-                        name: signal_def.name.clone(),
-                        value: DecodedSignalValue::Numeric(float_value),
-                        unit: signal_def.unit.clone(),
-                    });
-                }
-            }
-
-            // Apply scaling
-            let scaled_value = raw_value_with_sign as f64 * signal_def.factor + signal_def.offset;
-
-            Some(DecodedSignal {
-                name: signal_def.name.clone(),
-                value: DecodedSignalValue::Numeric(scaled_value),
-                unit: signal_def.unit.clone(),
-            })
+            });
         }
+
+        // Check for float definition
+        let float_def = self
+            .msg_entries
+            .get(&msg_id)
+            .and_then(|entry| entry.format_defs.get(&signal_def.name))
+            .and_then(|format_def| format_def.float_format);
+        if let Some(float_format) = float_def {
+            let float_value: Option<f64> = match float_format {
+                FloatFormat::F32 => {
+                    if signal_def.size != 32 {
+                        log::warn!(
+                            "Signal {} marked as f32 but size is {} bits",
+                            signal_def.name,
+                            signal_def.size
+                        );
+                        return None;
+                    }
+
+                    Some(f32::from_bits(raw_value as u32) as f64)
+                }
+
+                FloatFormat::F64 => {
+                    if signal_def.size != 64 {
+                        log::warn!(
+                            "Signal {} marked as f64 but size is {} bits",
+                            signal_def.name,
+                            signal_def.size
+                        );
+                        return None;
+                    }
+
+                    Some(f64::from_bits(raw_value))
+                }
+            };
+            if let Some(float_value) = float_value {
+                let scaled_value = float_value * signal_def.factor + signal_def.offset;
+                return Some(DecodedSignal {
+                    name: signal_def.name.clone(),
+                    value: DecodedSignalValue::Numeric(scaled_value),
+                    unit: signal_def.unit.clone(),
+                });
+            }
+        }
+
+        // Not enum or float, signed/unsigned integer
+        let scaled_value = raw_value_with_sign as f64 * signal_def.factor + signal_def.offset;
+        Some(DecodedSignal {
+            name: signal_def.name.clone(),
+            value: DecodedSignalValue::Numeric(scaled_value),
+            unit: signal_def.unit.clone(),
+        })
     }
 
     /// Extracts raw signal bits from CAN data.
