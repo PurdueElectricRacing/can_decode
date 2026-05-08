@@ -411,12 +411,7 @@ impl Parser {
                 continue;
             };
 
-            let expected_size = match float_format {
-                FloatFormat::F32 => 32,
-                FloatFormat::F64 => 64,
-            };
-
-            if signal_def.size != expected_size {
+            if signal_def.size != float_format.bit_size() as u64 {
                 log::warn!(
                     "Signal '{}' in message ID {:#X} marked as {} but size is {} bits. \
                     Skipping float definition.",
