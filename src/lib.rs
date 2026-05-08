@@ -862,7 +862,7 @@ impl Parser {
     /// Takes a message ID and a map of signal names to their physical values,
     /// then encodes them according to the DBC definitions into raw CAN data bytes.
     /// Applies inverse scaling (offset and factor) and packs bits according to
-    /// the signal's byte order and position. Applies scaling factors.
+    /// the signal's byte order and position.
     ///
     /// # Arguments
     ///
@@ -938,7 +938,7 @@ impl Parser {
     /// Encodes a CAN message by message name instead of ID.
     ///
     /// Looks up the message by name and then encode it. This is slower as it
-    /// requires searching through all loaded messages. Applies scaling factors.
+    /// requires searching through all loaded messages.
     ///
     /// # Arguments
     ///
