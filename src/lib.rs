@@ -536,32 +536,33 @@ impl Parser {
                     comment,
                 } => {
                     let msg_id = message_id.raw();
-                    if let Some(msg_entry) = self.msg_entries.get_mut(&msg_id) {
-                        if let Some(signal_meta) = msg_entry.signal_meta.get_mut(&name) {
 
-                            
-                            signal_meta.sig_comment = Some(comment);
-                        } else {
-                            msg_entry.signal_meta.insert(
-                                name.clone(),
-                                SignalMeta {
-                                    sig_comment: Some(comment),
-                                    ..Default::default()
-                                },
-                            );
-                        }
-                    } else {
+                    let Some(msg_entry) = self.msg_entries.get_mut(&msg_id) else {
                         log::warn!(
                             "Comment for signal '{}' references unknown message ID {:#X}. Skipping.",
                             name,
                             msg_id
                         );
+                        continue;
+                    };
+
+                    let signal_meta = msg_entry.signal_meta.entry(name.clone()).or_default();
+
+                    if signal_meta.sig_comment.is_some() {
+                        log::warn!(
+                            "Duplicate comment for signal '{}' in message ID {:#X}. \
+                            Overwriting existing signal comment.",
+                            name,
+                            msg_id
+                        );
                     }
+
+                    signal_meta.sig_comment = Some(comment);
                 }
                 _ => {}
             }
         }
-        
+
         Ok(())
     }
 
