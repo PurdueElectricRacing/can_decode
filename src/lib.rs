@@ -224,51 +224,23 @@ impl FloatFormat {
     }
 }
 
-/// Format definition for a signal's value interpretation.
+/// Signal metadata for a signal's value interpretation and DBC description/comment.
 ///
 /// Encapsulates optional formatting information for a signal, including
 /// enum mappings (for value descriptions) and float format specifications
 /// (for IEEE-754 encoded signals).
-#[derive(Debug, Clone)]
-pub struct FormatDef {
+///
+/// Also includes the signal-level description/comment from the DBC, if available.
+#[derive(Debug, Clone, Default)]
+pub struct SignalMeta {
     /// Maps raw signal values to string enum labels from DBC value descriptions.
     pub enum_map: std::collections::HashMap<i64, String>,
+
     /// The IEEE-754 float format, if this signal is an IEEE float/double.
     pub float_format: Option<FloatFormat>,
-}
 
-impl FormatDef {
-    /// Creates a format definition for an enumerated signal.
-    ///
-    /// # Arguments
-    ///
-    /// * `enum_map` - Mapping from raw signal values to string labels
-    ///
-    /// # Returns
-    ///
-    /// A new `FormatDef` with the enum map and no float format.
-    pub fn new_enum(enum_map: std::collections::HashMap<i64, String>) -> Self {
-        Self {
-            enum_map,
-            float_format: None,
-        }
-    }
-
-    /// Creates a format definition for an IEEE-754 floating-point signal.
-    ///
-    /// # Arguments
-    ///
-    /// * `float_format` - The IEEE-754 format (`F32` or `F64`)
-    ///
-    /// # Returns
-    ///
-    /// A new `FormatDef` with the float format and an empty enum map.
-    pub fn new_float(float_format: FloatFormat) -> Self {
-        Self {
-            enum_map: std::collections::HashMap::new(),
-            float_format: Some(float_format),
-        }
-    }
+    /// Signal-level description/comment from the DBC.
+    pub sig_comment: Option<String>,
 }
 
 /// Internal entry representing a loaded CAN message with its format definitions.
@@ -279,12 +251,16 @@ impl FormatDef {
 pub struct MsgEntry {
     /// The base DBC message definition containing signals and metadata.
     pub msg_def: can_dbc::Message,
-    /// Format definitions indexed by signal name (enums and float formats).
-    pub format_defs: std::collections::HashMap<String, FormatDef>,
+    /// Message-level description/comment from DBC (if available)
+    pub msg_desc: Option<String>,
+    /// Extra metadata for signals indexed by signal name.
+    /// This includes enum mappings for value descriptions and float format info
+    /// for IEEE float signals as well as signal-level comments.
+    pub signal_meta: std::collections::HashMap<String, SignalMeta>,
 }
 
 impl MsgEntry {
-    /// Creates a new message entry from a DBC message definition.
+    /// Creates a new message entry from a can_dbc message definition.
     ///
     /// # Arguments
     ///
@@ -292,11 +268,13 @@ impl MsgEntry {
     ///
     /// # Returns
     ///
-    /// A new `MsgEntry` with the message definition and an empty format definitions map.
+    /// A new `MsgEntry` with the message definition, and empty description, and
+    /// an empty signal metadata map (to be populated with enums, float formats, and comments).
     fn new(msg_def: can_dbc::Message) -> Self {
         Self {
             msg_def,
-            format_defs: std::collections::HashMap::new(),
+            msg_desc: None,
+            signal_meta: std::collections::HashMap::new(),
         }
     }
 }
@@ -447,24 +425,25 @@ impl Parser {
                 continue;
             };
 
-            let enum_def = FormatDef::new_enum(
-                value_descriptions
+            let enum_def = SignalMeta {
+                enum_map: value_descriptions
                     .iter()
                     .map(|vd| (vd.id, vd.description.clone()))
                     .collect(),
-            );
+                ..Default::default()
+            };
 
-            if let Some(existing) = msg_entry.format_defs.get_mut(&name) {
+            if let Some(existing) = msg_entry.signal_meta.get_mut(&name) {
                 existing.enum_map = enum_def.enum_map;
 
                 log::warn!(
                     "Duplicate value description for signal '{}' in message ID {:#X}. \
-            Overwriting existing enum definition.",
+                    Overwriting existing enum definition.",
                     name,
                     msg_id
                 );
             } else {
-                msg_entry.format_defs.insert(name.clone(), enum_def);
+                msg_entry.signal_meta.insert(name.clone(), enum_def);
             }
         }
 
@@ -519,9 +498,12 @@ impl Parser {
                 continue;
             }
 
-            let format_def = FormatDef::new_float(float_format);
+            let format_def = SignalMeta {
+                float_format: Some(float_format),
+                ..Default::default()
+            };
 
-            if let Some(existing) = msg_entry.format_defs.get_mut(signal_name) {
+            if let Some(existing) = msg_entry.signal_meta.get_mut(signal_name) {
                 existing.float_format = format_def.float_format;
 
                 log::warn!(
@@ -532,10 +514,65 @@ impl Parser {
                 );
             } else {
                 msg_entry
-                    .format_defs
+                    .signal_meta
                     .insert(signal_name.clone(), format_def);
             }
         }
+
+        // Descriptions/comments handling
+        for comment in dbc.comments {
+            match comment {
+                can_dbc::Comment::Message { id, comment } => {
+                    let msg_id = id.raw();
+
+                    let Some(msg_entry) = self.msg_entries.get_mut(&msg_id) else {
+                        log::warn!("Comment for unknown message ID {:#X}. Skipping.", msg_id);
+                        continue;
+                    };
+
+                    if msg_entry.msg_desc.is_some() {
+                        log::warn!(
+                            "Duplicate comment for message ID {:#X}. \
+                            Overwriting existing message comment.",
+                            msg_id
+                        );
+                    }
+
+                    msg_entry.msg_desc = Some(comment);
+                }
+                can_dbc::Comment::Signal {
+                    message_id,
+                    name,
+                    comment,
+                } => {
+                    let msg_id = message_id.raw();
+
+                    let Some(msg_entry) = self.msg_entries.get_mut(&msg_id) else {
+                        log::warn!(
+                            "Comment for signal '{}' references unknown message ID {:#X}. Skipping.",
+                            name,
+                            msg_id
+                        );
+                        continue;
+                    };
+
+                    let signal_meta = msg_entry.signal_meta.entry(name.clone()).or_default();
+
+                    if signal_meta.sig_comment.is_some() {
+                        log::warn!(
+                            "Duplicate comment for signal '{}' in message ID {:#X}. \
+                            Overwriting existing signal comment.",
+                            name,
+                            msg_id
+                        );
+                    }
+
+                    signal_meta.sig_comment = Some(comment);
+                }
+                _ => {}
+            }
+        }
+
         Ok(())
     }
 
@@ -693,7 +730,7 @@ impl Parser {
         let format_def = self
             .msg_entries
             .get(&msg_id)
-            .and_then(|entry| entry.format_defs.get(&signal_def.name));
+            .and_then(|entry| entry.signal_meta.get(&signal_def.name));
         if let Some(format_def) = format_def {
             if let Some(enum_str) = format_def.enum_map.get(&raw_value_with_sign) {
                 let physical = raw_value_with_sign as f64 * signal_def.factor + signal_def.offset;
@@ -721,7 +758,7 @@ impl Parser {
         let float_def = self
             .msg_entries
             .get(&msg_id)
-            .and_then(|entry| entry.format_defs.get(&signal_def.name))
+            .and_then(|entry| entry.signal_meta.get(&signal_def.name))
             .and_then(|format_def| format_def.float_format);
         if let Some(float_format) = float_def {
             // Note: signal sizes are validated when loading the DBC, so we can assume 32 bits for f32 and 64 bits for f64
@@ -1020,7 +1057,7 @@ impl Parser {
         let float_def = self
             .msg_entries
             .get(&msg_id)
-            .and_then(|entry| entry.format_defs.get(&signal_def.name))
+            .and_then(|entry| entry.signal_meta.get(&signal_def.name))
             .and_then(|format_def| format_def.float_format);
         if let Some(float_format) = float_def {
             // For float signals, convert to the appropriate float type and extract bit pattern
@@ -1212,6 +1249,31 @@ impl Parser {
     pub fn signal_defs(&self, msg_id: u32) -> Option<Vec<can_dbc::Signal>> {
         let msg_entry = self.msg_entries.get(&msg_id)?;
         Some(msg_entry.msg_def.signals.clone())
+    }
+
+    /// Returns the message-level description/comment for a message ID.
+    ///
+    /// # Returns
+    ///
+    /// A reference to the message comment if present, or `None` if the message
+    /// is unknown or has no DBC comment.
+    pub fn msg_desc(&self, msg_id: u32) -> Option<&str> {
+        self.msg_entries
+            .get(&msg_id)
+            .and_then(|entry| entry.msg_desc.as_deref())
+    }
+
+    /// Returns the signal-level description/comment for a signal within a message.
+    ///
+    /// # Returns
+    ///
+    /// A reference to the signal comment if present, or `None` if the message,
+    /// signal, or comment is not available.
+    pub fn signal_desc(&self, msg_id: u32, signal_name: &str) -> Option<&str> {
+        self.msg_entries
+            .get(&msg_id)
+            .and_then(|entry| entry.signal_meta.get(signal_name))
+            .and_then(|meta| meta.sig_comment.as_deref())
     }
 
     /// Returns all loaded can_dbc message definitions.
