@@ -937,7 +937,7 @@ impl Parser {
 
     /// Encodes a CAN message by message name instead of ID.
     ///
-    /// Looks up the message by name and then encode it. This is slower as it
+    /// Looks up the message by name and then encodes it. This is slower as it
     /// requires searching through all loaded messages.
     ///
     /// # Arguments
