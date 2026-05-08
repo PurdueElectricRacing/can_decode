@@ -1284,6 +1284,7 @@ impl Parser {
     /// use can_decode::Parser;
     ///
     /// let mut parser = Parser::new();
+    /// // Load some DBC files or add definitions...
     /// parser.clear();
     /// ```
     pub fn clear(&mut self) {
