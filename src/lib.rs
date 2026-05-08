@@ -104,7 +104,6 @@ macro_rules! low_bits_mask {
 /// This allows downstream crates to reference the signal map type without
 /// needing to add indexmap as a dependency.
 pub type SignalMap = indexmap::map::IndexMap<String, DecodedSignal>;
-
 /// A decoded CAN message containing signal values.
 ///
 /// This structure represents a fully decoded CAN message with all its signals
@@ -124,22 +123,46 @@ pub struct DecodedMessage {
 }
 
 /// Represents the decoded value of a CAN signal.
-///
-/// Signals can be either numeric (physical values after scaling) or enumerated
-/// (string labels mapped from raw values via DBC value descriptions).
 #[derive(Debug, Clone)]
-pub enum DecodedSignalValue {
-    /// Numeric signal value.
-    ///
-    /// For integer or IEEE float/double signals, this is the physical value
-    /// after applying the factor and offset from the signal definition.
-    /// The scaling formula applied is: `physical_value = raw_value * factor + offset`
-    Numeric(f64),
-    /// An enumerated signal value.
-    ///
-    /// Contains both the raw integer value (with sign accounting) and its
-    /// corresponding string label as defined in the DBC value descriptions.
-    Enum(i64, String),
+pub struct DecodedSignalValue {
+    /// The physical value of the signal after applying scaling and offset.
+    pub physical: f64,
+    /// Contains the raw integer value (with sign accounting).
+    /// Present unless the signal is an IEEE float/double.
+    pub raw: Option<i64>,
+    /// If the signal/value has an enum mapping, this contains the corresponding enum label.
+    pub enum_label: Option<String>,
+}
+
+impl DecodedSignalValue {
+    /// Creates a new `DecodedSignalValue` for a numeric signal that is backed by
+    /// an integer (signed or unsigned).
+    pub fn new_integer_backed_numeric(physical: f64, raw_value: i64) -> Self {
+        Self {
+            physical,
+            raw: Some(raw_value),
+            enum_label: None,
+        }
+    }
+
+    /// Creates a new `DecodedSignalValue` for a numeric signal that is backed
+    /// by an IEEE-754 float/double.
+    pub fn new_float_backed_numeric(physical: f64) -> Self {
+        Self {
+            physical,
+            raw: None,
+            enum_label: None,
+        }
+    }
+
+    /// Creates a new `DecodedSignalValue` for an enumerated signal.
+    pub fn new_enum(physical: f64, raw_value: i64, enum_label: String) -> Self {
+        Self {
+            physical,
+            raw: Some(raw_value),
+            enum_label: Some(enum_label),
+        }
+    }
 }
 
 /// A decoded signal with its physical value.
@@ -161,7 +184,7 @@ pub struct DecodedSignal {
 ///
 /// Used internally to properly decode and encode signals that are stored as
 /// IEEE-754 floating-point values in CAN messages (via the `SIG_VALTYPE_` DBC field).
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum FloatFormat {
     /// 32-bit IEEE-754 single-precision float (f32)
     F32,
@@ -206,7 +229,7 @@ impl FloatFormat {
 /// Encapsulates optional formatting information for a signal, including
 /// enum mappings (for value descriptions) and float format specifications
 /// (for IEEE-754 encoded signals).
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct FormatDef {
     /// Maps raw signal values to string enum labels from DBC value descriptions.
     pub enum_map: std::collections::HashMap<i64, String>,
@@ -252,6 +275,7 @@ impl FormatDef {
 ///
 /// Stores both the base DBC message definition and the signal-specific format
 /// metadata (enums and float formats) in a unified structure.
+#[derive(Debug, Clone)]
 pub struct MsgEntry {
     /// The base DBC message definition containing signals and metadata.
     pub msg_def: can_dbc::Message,
@@ -300,6 +324,7 @@ impl MsgEntry {
 /// # Ok(())
 /// # }
 /// ```
+#[derive(Debug, Clone)]
 pub struct Parser {
     msg_entries: std::collections::HashMap<u32, MsgEntry>,
 }
@@ -671,9 +696,14 @@ impl Parser {
             .and_then(|entry| entry.format_defs.get(&signal_def.name));
         if let Some(format_def) = format_def {
             if let Some(enum_str) = format_def.enum_map.get(&raw_value_with_sign) {
+                let physical = raw_value_with_sign as f64 * signal_def.factor + signal_def.offset;
                 return Some(DecodedSignal {
                     name: signal_def.name.clone(),
-                    value: DecodedSignalValue::Enum(raw_value_with_sign, enum_str.clone()),
+                    value: DecodedSignalValue::new_enum(
+                        physical,
+                        raw_value_with_sign,
+                        enum_str.clone(),
+                    ),
                     unit: signal_def.unit.clone(),
                 });
             } else {
@@ -702,7 +732,7 @@ impl Parser {
             let scaled_value = float_value * signal_def.factor + signal_def.offset;
             return Some(DecodedSignal {
                 name: signal_def.name.clone(),
-                value: DecodedSignalValue::Numeric(scaled_value),
+                value: DecodedSignalValue::new_float_backed_numeric(scaled_value),
                 unit: signal_def.unit.clone(),
             });
         }
@@ -711,7 +741,10 @@ impl Parser {
         let scaled_value = raw_value_with_sign as f64 * signal_def.factor + signal_def.offset;
         Some(DecodedSignal {
             name: signal_def.name.clone(),
-            value: DecodedSignalValue::Numeric(scaled_value),
+            value: DecodedSignalValue::new_integer_backed_numeric(
+                scaled_value,
+                raw_value_with_sign,
+            ),
             unit: signal_def.unit.clone(),
         })
     }
@@ -829,7 +862,7 @@ impl Parser {
     /// Takes a message ID and a map of signal names to their physical values,
     /// then encodes them according to the DBC definitions into raw CAN data bytes.
     /// Applies inverse scaling (offset and factor) and packs bits according to
-    /// the signal's byte order and position. Applies scaling factors.
+    /// the signal's byte order and position.
     ///
     /// # Arguments
     ///
@@ -904,8 +937,8 @@ impl Parser {
 
     /// Encodes a CAN message by message name instead of ID.
     ///
-    /// Looks up the message by name and then encode it. This is slower as it
-    /// requires searching through all loaded messages. Applies scaling factors.
+    /// Looks up the message by name and then encodes it. This is slower as it
+    /// requires searching through all loaded messages.
     ///
     /// # Arguments
     ///
@@ -1181,32 +1214,12 @@ impl Parser {
         Some(msg_entry.msg_def.signals.clone())
     }
 
-    /// Returns all loaded message definitions.
+    /// Returns all loaded can_dbc message definitions.
     ///
     /// # Returns
     ///
     /// A vector containing all message definitions that have been loaded
-    /// from DBC files.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use can_decode::Parser;
-    /// use std::path::Path;
-    ///
-    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let parser = Parser::from_dbc_file(Path::new("my_database.dbc"))?;
-    ///
-    /// for msg in parser.msg_defs() {
-    ///     println!("Message: {} (ID: {:#X})", msg.name,
-    ///              match msg.id {
-    ///                  can_dbc::MessageId::Standard(id) => id as u32,
-    ///                  can_dbc::MessageId::Extended(id) => id,
-    ///              });
-    /// }
-    /// # Ok(())
-    /// # }
-    /// ```
+    /// from DBC files. O(n) to convert from internal map.
     pub fn msg_defs(&self) -> Vec<can_dbc::Message> {
         self.msg_entries
             .values()
@@ -1214,7 +1227,7 @@ impl Parser {
             .collect()
     }
 
-    /// Returns the message definition for a given message ID.
+    /// Returns the can_dbc message definition for a given message ID. O(1) lookup.
     ///
     /// # Arguments
     ///
@@ -1224,24 +1237,40 @@ impl Parser {
     ///
     /// Returns a reference to the message definition if found, or `None` if
     /// the message ID is not known.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use can_decode::Parser;
-    /// use std::path::Path;
-    ///
-    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let parser = Parser::from_dbc_file(Path::new("my_database.dbc"))?;
-    ///
-    /// if let Some(msg_def) = parser.msg_def(0x123) {
-    ///     println!("Message: {}", msg_def.name);
-    /// }
-    /// # Ok(())
-    /// # }
-    ///
     pub fn msg_def(&self, msg_id: u32) -> Option<&can_dbc::Message> {
         self.msg_entries.get(&msg_id).map(|entry| &entry.msg_def)
+    }
+
+    /// Exposes the internal message entries map.
+    ///
+    /// This provides access to all loaded messages indexed by their CAN message IDs,
+    /// including their format definitions (enums and float types).
+    ///
+    /// # Returns
+    ///
+    /// A reference to the HashMap mapping message IDs to `MsgEntry` structures.
+    /// Each `MsgEntry` contains both the DBC message definition and its associated
+    /// format metadata.
+    pub fn msg_entries(&self) -> &std::collections::HashMap<u32, MsgEntry> {
+        &self.msg_entries
+    }
+
+    /// Returns the message entry for a given message ID. O(1) lookup.
+    ///
+    /// Provides access to both the DBC message definition and its format definitions
+    /// (enums and float type specifications) for a specific message ID.
+    ///
+    /// # Arguments
+    ///
+    /// * `msg_id` - The CAN message identifier
+    ///
+    /// # Returns
+    ///
+    /// Returns a reference to the `MsgEntry` if found, or `None` if the message ID
+    /// is not known. The `MsgEntry` contains both `msg_def` (the DBC definition) and
+    /// `format_defs` (the signal formatting metadata).
+    pub fn msg_entry(&self, msg_id: u32) -> Option<&MsgEntry> {
+        self.msg_entries.get(&msg_id)
     }
 
     /// Clears all loaded message definitions.
@@ -1255,6 +1284,7 @@ impl Parser {
     /// use can_decode::Parser;
     ///
     /// let mut parser = Parser::new();
+    /// // Load some DBC files or add definitions...
     /// parser.clear();
     /// ```
     pub fn clear(&mut self) {
