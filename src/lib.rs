@@ -438,7 +438,7 @@ impl Parser {
 
                 log::warn!(
                     "Duplicate value description for signal '{}' in message ID {:#X}. \
-            Overwriting existing enum definition.",
+                    Overwriting existing enum definition.",
                     name,
                     msg_id
                 );
@@ -518,6 +518,53 @@ impl Parser {
                     .insert(signal_name.clone(), format_def);
             }
         }
+
+        // Descriptions/comments handling
+        for comment in dbc.comments {
+            match comment {
+                can_dbc::Comment::Message { id, comment } => {
+                    let msg_id = id.raw();
+                    if let Some(msg_entry) = self.msg_entries.get_mut(&msg_id) {
+                        msg_entry.msg_desc = Some(comment);
+                    } else {
+                        log::warn!(
+                            "Comment for unknown message ID {:#X}. Skipping.",
+                            msg_id
+                        );
+                    }
+                }
+                can_dbc::Comment::Signal {
+                    message_id,
+                    name,
+                    comment,
+                } => {
+                    let msg_id = message_id.raw();
+                    if let Some(msg_entry) = self.msg_entries.get_mut(&msg_id) {
+                        if let Some(signal_meta) = msg_entry.signal_meta.get_mut(&name) {
+
+                            
+                            signal_meta.sig_comment = Some(comment);
+                        } else {
+                            msg_entry.signal_meta.insert(
+                                name.clone(),
+                                SignalMeta {
+                                    sig_comment: Some(comment),
+                                    ..Default::default()
+                                },
+                            );
+                        }
+                    } else {
+                        log::warn!(
+                            "Comment for signal '{}' references unknown message ID {:#X}. Skipping.",
+                            name,
+                            msg_id
+                        );
+                    }
+                }
+                _ => {}
+            }
+        }
+        
         Ok(())
     }
 
