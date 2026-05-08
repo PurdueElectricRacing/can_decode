@@ -11,6 +11,7 @@
 //! - Handle big-endian and little-endian byte ordering
 //! - Support for signed and unsigned signal values
 //! - Decode/encode IEEE-754 float signals (`SIG_VALTYPE_`)
+//! - Support for DBC enumerations (value descriptions) to map raw values to string labels
 //! - Apply scaling factors and offsets (and inverse for encoding)
 //!
 //! ## Decoding Example
@@ -122,15 +123,22 @@ pub struct DecodedMessage {
     pub signals: SignalMap,
 }
 
+/// Represents the decoded value of a CAN signal.
+///
+/// Signals can be either numeric (physical values after scaling) or enumerated
+/// (string labels mapped from raw values via DBC value descriptions).
 #[derive(Debug, Clone)]
 pub enum DecodedSignalValue {
     /// Numeric signal value.
     ///
-    /// For integer or IEEE float/double signals backed signals this is the physical
-    /// value after applying factor and offset.
+    /// For integer or IEEE float/double signals, this is the physical value
+    /// after applying the factor and offset from the signal definition.
+    /// The scaling formula applied is: `physical_value = raw_value * factor + offset`
     Numeric(f64),
-    /// The raw value (with signed-ness accounted for) and the string value for
-    /// an enumerated signal (if defined in the DBC)
+    /// An enumerated signal value.
+    ///
+    /// Contains both the raw integer value (with sign accounting) and its
+    /// corresponding string label as defined in the DBC value descriptions.
     Enum(i64, String),
 }
 
@@ -149,13 +157,29 @@ pub struct DecodedSignal {
     pub unit: String,
 }
 
+/// Specifies the IEEE-754 floating-point format for a signal.
+///
+/// Used internally to properly decode and encode signals that are stored as
+/// IEEE-754 floating-point values in CAN messages (via the `SIG_VALTYPE_` DBC field).
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum FloatFormat {
+    /// 32-bit IEEE-754 single-precision float (f32)
     F32,
+    /// 64-bit IEEE-754 double-precision float (f64)
     F64,
 }
 
 impl FloatFormat {
+    /// Converts a DBC signal extended value type to a FloatFormat if it's a float type.
+    ///
+    /// # Arguments
+    ///
+    /// * `def` - The DBC signal extended value type definition
+    ///
+    /// # Returns
+    ///
+    /// Returns `Some(FloatFormat)` if the definition is a float type, or `None`
+    /// if it's a signed/unsigned integer type.
     pub fn from_dbc_def(def: can_dbc::SignalExtendedValueType) -> Option<Self> {
         match def {
             can_dbc::SignalExtendedValueType::IEEEfloat32Bit => Some(FloatFormat::F32),
@@ -164,6 +188,11 @@ impl FloatFormat {
         }
     }
 
+    /// Returns the size of this float format in bits.
+    ///
+    /// # Returns
+    ///
+    /// 32 for `F32`, or 64 for `F64`.
     pub fn bit_size(&self) -> usize {
         match self {
             FloatFormat::F32 => 32,
@@ -172,14 +201,29 @@ impl FloatFormat {
     }
 }
 
+/// Format definition for a signal's value interpretation.
+///
+/// Encapsulates optional formatting information for a signal, including
+/// enum mappings (for value descriptions) and float format specifications
+/// (for IEEE-754 encoded signals).
 #[derive(Clone)]
-
 pub struct FormatDef {
+    /// Maps raw signal values to string enum labels from DBC value descriptions.
     pub enum_map: std::collections::HashMap<i64, String>,
+    /// The IEEE-754 float format, if this signal is an IEEE float/double.
     pub float_format: Option<FloatFormat>,
 }
 
 impl FormatDef {
+    /// Creates a format definition for an enumerated signal.
+    ///
+    /// # Arguments
+    ///
+    /// * `enum_map` - Mapping from raw signal values to string labels
+    ///
+    /// # Returns
+    ///
+    /// A new `FormatDef` with the enum map and no float format.
     pub fn new_enum(enum_map: std::collections::HashMap<i64, String>) -> Self {
         Self {
             enum_map,
@@ -187,6 +231,15 @@ impl FormatDef {
         }
     }
 
+    /// Creates a format definition for an IEEE-754 floating-point signal.
+    ///
+    /// # Arguments
+    ///
+    /// * `float_format` - The IEEE-754 format (`F32` or `F64`)
+    ///
+    /// # Returns
+    ///
+    /// A new `FormatDef` with the float format and an empty enum map.
     pub fn new_float(float_format: FloatFormat) -> Self {
         Self {
             enum_map: std::collections::HashMap::new(),
@@ -195,12 +248,27 @@ impl FormatDef {
     }
 }
 
+/// Internal entry representing a loaded CAN message with its format definitions.
+///
+/// Stores both the base DBC message definition and the signal-specific format
+/// metadata (enums and float formats) in a unified structure.
 pub struct MsgEntry {
+    /// The base DBC message definition containing signals and metadata.
     pub msg_def: can_dbc::Message,
-    pub format_defs: std::collections::HashMap<String, FormatDef>, // signal name -> format definition
+    /// Format definitions indexed by signal name (enums and float formats).
+    pub format_defs: std::collections::HashMap<String, FormatDef>,
 }
 
 impl MsgEntry {
+    /// Creates a new message entry from a DBC message definition.
+    ///
+    /// # Arguments
+    ///
+    /// * `msg_def` - The DBC message definition
+    ///
+    /// # Returns
+    ///
+    /// A new `MsgEntry` with the message definition and an empty format definitions map.
     fn new(msg_def: can_dbc::Message) -> Self {
         Self {
             msg_def,
@@ -650,8 +718,29 @@ impl Parser {
 
     /// Extracts raw signal bits from CAN data.
     ///
-    /// Handles both little-endian and big-endian byte ordering according to
-    /// the signal definition.
+    /// This function reads the raw bits for a signal from the CAN message data,
+    /// handling both little-endian and big-endian byte ordering according to DBC specifications.
+    ///
+    /// ## Little-Endian Extraction
+    ///
+    /// For little-endian signals, bits are read starting from `start_bit` and proceeding
+    /// through sequential bytes, with results accumulated in the LSB-first order.
+    ///
+    /// ## Big-Endian Extraction
+    ///
+    /// For big-endian signals, `start_bit` specifies the MSB position using DBC's sawtooth numbering.
+    /// The bits are extracted MSB-first and accumulated into the result.
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - The raw CAN message bytes
+    /// * `start_bit` - Starting bit position (DBC-style)
+    /// * `size` - Number of bits to extract
+    /// * `byte_order` - Byte order (little-endian or big-endian)
+    ///
+    /// # Returns
+    ///
+    /// The extracted bits as a `u64`, or `None` if data is empty or out of bounds.
     fn extract_signal_value(
         &self,
         data: &[u8],
@@ -667,6 +756,7 @@ impl Parser {
 
         match byte_order {
             can_dbc::ByteOrder::LittleEndian => {
+                // For little-endian, start_bit gives us the LSB position
                 let start_byte = start_bit / 8;
                 let start_bit_in_byte = start_bit % 8;
 
@@ -674,16 +764,21 @@ impl Parser {
                 let mut current_byte = start_byte;
                 let mut bit_offset = start_bit_in_byte;
 
+                // Read bits sequentially across bytes
                 while remaining_bits > 0 {
                     if current_byte >= data.len() {
-                        // Out of bounds: should not be considered a successful decode
+                        // Out of bounds: cannot extract signal
                         return None;
                     }
 
+                    // Determine how many bits we can read from this byte
                     let bits_in_this_byte = std::cmp::min(remaining_bits, 8 - bit_offset);
+                    // Create mask for the bits we want from this byte
                     let mask = low_bits_mask!(bits_in_this_byte, u64) << bit_offset;
+                    // Extract and shift the bits to the LSB position
                     let byte_value = ((data[current_byte] as u64) & mask) >> bit_offset;
 
+                    // Place the extracted bits in the result, with higher-order bits on the left
                     result |= byte_value << (size - remaining_bits);
 
                     remaining_bits -= bits_in_this_byte;
@@ -692,26 +787,32 @@ impl Parser {
                 }
             }
             can_dbc::ByteOrder::BigEndian => {
-                // start_bit is the MSB position in DBC sawtooth numbering
-                // byte_idx = start_bit / 8, bit_in_byte = start_bit % 8 (counts from LSB of byte)
-                // Actual bit position within the byte = bit_in_byte (7=MSB, 0=LSB)
+                // For big-endian (Motorola), start_bit specifies the MSB position.
+                // The DBC "sawtooth" numbering:
+                //   - byte_idx = start_bit / 8
+                //   - bit_in_byte = start_bit % 8 (0=LSB, 7=MSB of the byte)
 
                 let start_byte = start_bit / 8;
-                let start_bit_in_byte = start_bit % 8; // Physical bit index
+                let start_bit_in_byte = start_bit % 8; // Physical bit index (0-7)
 
                 let mut byte_idx = start_byte;
-                let mut bit_in_byte = start_bit_in_byte as i32; // Counts down within byte
+                let mut bit_in_byte = start_bit_in_byte as i32; // Current bit position, counts downward
 
+                // Extract bits from MSB to LSB
                 for _i in 0..size {
                     if byte_idx >= data.len() {
-                        // Out of bounds: should not be considered a successful decode
+                        // Out of bounds: cannot extract signal
                         return None;
                     }
 
+                    // Extract one bit at the current position
                     let bit_val = (data[byte_idx] >> bit_in_byte) & 1;
+                    // Shift result left and add the extracted bit
                     result = (result << 1) | (bit_val as u64);
 
+                    // Move to the next bit (downward within the byte)
                     bit_in_byte -= 1;
+                    // If we've gone past bit 0, move to the next byte
                     if bit_in_byte < 0 {
                         bit_in_byte = 7;
                         byte_idx += 1;
@@ -853,8 +954,25 @@ impl Parser {
 
     /// Encodes a single signal into raw CAN data.
     ///
-    /// Applies inverse scaling (subtracts offset, divides by factor), converts to
-    /// the appropriate integer representation, and packs the bits into the data buffer.
+    /// Converts a physical signal value back to its raw representation by:
+    /// 1. Applying inverse scaling: `raw_value = (physical_value - offset) / factor`
+    /// 2. Converting to the appropriate integer representation (signed/unsigned)
+    /// 3. Clamping to the valid range for the signal's bit width
+    /// 4. Packing the bits into the data buffer at the signal's bit position
+    ///
+    /// For IEEE float/double signals, the physical value is converted directly
+    /// to f32 or f64 and the bit pattern is extracted.
+    ///
+    /// # Arguments
+    ///
+    /// * `msg_id` - The CAN message ID (used to look up format definitions)
+    /// * `signal_def` - The DBC signal definition
+    /// * `physical_value` - The physical value to encode
+    /// * `data` - Mutable buffer to write the encoded bits into
+    ///
+    /// # Returns
+    ///
+    /// `Some(())` on success, `None` if encoding fails (e.g., bounds check)
     fn encode_signal(
         &self,
         msg_id: u32,
@@ -862,15 +980,17 @@ impl Parser {
         physical_value: f64,
         data: &mut [u8],
     ) -> Option<()> {
+        // Apply inverse scaling to convert physical value back to raw value
         let scaled_value = (physical_value - signal_def.offset) / signal_def.factor;
 
+        // Check if this is an IEEE float/double signal
         let float_def = self
             .msg_entries
             .get(&msg_id)
             .and_then(|entry| entry.format_defs.get(&signal_def.name))
             .and_then(|format_def| format_def.float_format);
         if let Some(float_format) = float_def {
-            // Note: signal sizes are validated when loading the DBC, so we can assume 32 bits for f32 and 64 bits for f64
+            // For float signals, convert to the appropriate float type and extract bit pattern
             let float_data = match float_format {
                 FloatFormat::F32 => (scaled_value as f32).to_bits() as u64,
                 FloatFormat::F64 => scaled_value.to_bits(),
@@ -884,20 +1004,19 @@ impl Parser {
             );
         }
 
-        // Convert to integer and handle signed/unsigned
+        // For integer signals, convert and handle signed/unsigned representation
         let raw_int = if signal_def.value_type == can_dbc::ValueType::Signed {
-            // Convert signed physical value to the integer representation
-            // then to the unsigned bit pattern (two's complement).
+            // Convert the physical value to a signed integer
             let signed_val = scaled_value.round() as i64;
-            // For an N-bit signed value the allowed signed range is
-            // -(1 << (N-1)) .. (1 << (N-1)) - 1
+            // Calculate the valid range for N-bit signed integers
+            // Range: -(2^(N-1)) to (2^(N-1) - 1)
             let max_value = (1i64 << (signal_def.size - 1)) - 1;
             let min_value = -(1i64 << (signal_def.size - 1));
 
-            // Clamp to valid signed range
+            // Clamp the value to the valid signed range
             let clamped = signed_val.max(min_value).min(max_value);
 
-            // Convert to unsigned representation (two's complement)
+            // Convert negative values to two's complement bit pattern
             if clamped < 0 {
                 let mask = low_bits_mask!(signal_def.size as usize, u64);
                 (clamped as u64) & mask
@@ -905,15 +1024,13 @@ impl Parser {
                 clamped as u64
             }
         } else {
-            // Unsigned value
+            // For unsigned signals, clamp to the maximum unsigned value
             let unsigned_val = scaled_value.round() as u64;
             let max_value = low_bits_mask!(signal_def.size as usize, u64);
-
-            // Clamp to valid range
             unsigned_val.min(max_value)
         };
 
-        // Insert the value into the data buffer
+        // Insert the encoded bits into the data buffer
         self.insert_signal_value(
             data,
             signal_def.start_bit as usize,
@@ -925,8 +1042,30 @@ impl Parser {
 
     /// Inserts raw signal bits into CAN data.
     ///
-    /// Handles both little-endian and big-endian byte ordering according to
-    /// the signal definition.
+    /// This function packs raw bits (typically from encoding) into the CAN message buffer,
+    /// handling both little-endian and big-endian byte ordering.
+    ///
+    /// ## Little-Endian Insertion
+    ///
+    /// For little-endian signals, bits are packed starting from `start_bit` across sequential
+    /// bytes, with the LSBs of the value written first.
+    ///
+    /// ## Big-Endian Insertion
+    ///
+    /// For big-endian signals, `start_bit` specifies the MSB position using DBC's sawtooth numbering.
+    /// Bits are packed from MSB to LSB starting at that position.
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - Mutable buffer of CAN message bytes to modify
+    /// * `start_bit` - Starting bit position (DBC-style)
+    /// * `size` - Number of bits to insert
+    /// * `byte_order` - Byte order (little-endian or big-endian)
+    /// * `value` - The raw value to insert
+    ///
+    /// # Returns
+    ///
+    /// `Some(())` on success, or `None` if the signal extends beyond the data bounds.
     fn insert_signal_value(
         &self,
         data: &mut [u8],
@@ -941,6 +1080,7 @@ impl Parser {
 
         let total_bits = data.len() * 8;
         if start_bit + size > total_bits {
+            // Signal extends beyond the data buffer
             return None;
         }
 
@@ -954,15 +1094,18 @@ impl Parser {
                 let mut bit_offset = start_bit_in_byte;
                 let mut value_offset = 0;
 
+                // Write bits sequentially across bytes
                 while remaining_bits > 0 && current_byte < data.len() {
+                    // Determine how many bits we can write to this byte
                     let bits_in_this_byte = std::cmp::min(remaining_bits, 8 - bit_offset);
+                    // Create a mask for the bits we're about to write
                     let mask = low_bits_mask!(bits_in_this_byte, u8) << bit_offset;
 
-                    // Extract bits from value
+                    // Extract the bits we want from the value
                     let value_mask = low_bits_mask!(bits_in_this_byte, u64);
                     let value_bits = ((value >> value_offset) & value_mask) as u8;
 
-                    // Clear the bits in the data byte and set new bits
+                    // Clear the target bits in the data byte and set new bits
                     data[current_byte] =
                         (data[current_byte] & !mask) | ((value_bits << bit_offset) & mask);
 
@@ -979,16 +1122,22 @@ impl Parser {
                 let mut byte_idx = start_byte;
                 let mut bit_in_byte = start_bit_in_byte as i32;
 
+                // Write bits from MSB to LSB
                 for i in 0..size {
                     if byte_idx >= data.len() {
                         return None;
                     }
 
+                    // Extract the i-th bit from the value (starting from MSB)
                     let bit_val = ((value >> (size - 1 - i)) & 1) as u8;
+                    // Create a mask for the target bit position
                     let mask = 1u8 << bit_in_byte;
+                    // Clear the bit and set the new value
                     data[byte_idx] = (data[byte_idx] & !mask) | (bit_val << bit_in_byte);
 
+                    // Move to the next bit (downward within the byte)
                     bit_in_byte -= 1;
+                    // If we've gone past bit 0, move to the next byte
                     if bit_in_byte < 0 {
                         bit_in_byte = 7;
                         byte_idx += 1;

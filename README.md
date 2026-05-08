@@ -14,6 +14,7 @@ Decode and encode CAN frames into messages/signals in a fast and easy way.
 - Handle big-endian and little-endian byte ordering
 - Support for signed and unsigned signal values
 - Decode/encode IEEE-754 float signals (`SIG_VALTYPE_`)
+- Support for DBC enumerations (value descriptions) to map raw values to string labels
 - Apply scaling factors and offsets (and inverse for encoding)
 
 ## Decoding Example
