@@ -130,7 +130,7 @@ pub struct DecodedSignalValue {
     /// Contains the raw integer value (with sign accounting).
     /// Present unless the signal is an IEEE float/double.
     pub raw: Option<i64>,
-    /// If the signal has an enum mapping, this contains the raw value and the corresponding enum label.
+    /// If the signal/value has an enum mapping, this contains the corresponding enum label.
     pub enum_label: Option<String>,
 }
 
