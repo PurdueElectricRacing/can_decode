@@ -527,10 +527,7 @@ impl Parser {
                     if let Some(msg_entry) = self.msg_entries.get_mut(&msg_id) {
                         msg_entry.msg_desc = Some(comment);
                     } else {
-                        log::warn!(
-                            "Comment for unknown message ID {:#X}. Skipping.",
-                            msg_id
-                        );
+                        log::warn!("Comment for unknown message ID {:#X}. Skipping.", msg_id);
                     }
                 }
                 can_dbc::Comment::Signal {
