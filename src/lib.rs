@@ -129,7 +129,7 @@ pub struct DecodedSignalValue {
     pub physical: f64,
     /// Contains the raw integer value (with sign accounting).
     /// Present unless the signal is an IEEE float/double.
-    pub raw: Option<i64>,
+    pub raw: Option<i128>,
     /// If the signal/value has an enum mapping, this contains the corresponding enum label.
     pub enum_label: Option<String>,
 }
@@ -137,7 +137,7 @@ pub struct DecodedSignalValue {
 impl DecodedSignalValue {
     /// Creates a new `DecodedSignalValue` for a numeric signal that is backed by
     /// an integer (signed or unsigned).
-    pub fn new_integer_backed_numeric(physical: f64, raw_value: i64) -> Self {
+    pub fn new_integer_backed_numeric(physical: f64, raw_value: i128) -> Self {
         Self {
             physical,
             raw: Some(raw_value),
@@ -156,7 +156,7 @@ impl DecodedSignalValue {
     }
 
     /// Creates a new `DecodedSignalValue` for an enumerated signal.
-    pub fn new_enum(physical: f64, raw_value: i64, enum_label: String) -> Self {
+    pub fn new_enum(physical: f64, raw_value: i128, enum_label: String) -> Self {
         Self {
             physical,
             raw: Some(raw_value),
@@ -234,7 +234,7 @@ impl FloatFormat {
 #[derive(Debug, Clone, Default)]
 pub struct SignalMeta {
     /// Maps raw signal values to string enum labels from DBC value descriptions.
-    pub enum_map: std::collections::HashMap<i64, String>,
+    pub enum_map: std::collections::HashMap<i128, String>,
 
     /// The IEEE-754 float format, if this signal is an IEEE float/double.
     pub float_format: Option<FloatFormat>,
@@ -428,7 +428,7 @@ impl Parser {
             let enum_def = SignalMeta {
                 enum_map: value_descriptions
                     .iter()
-                    .map(|vd| (vd.id, vd.description.clone()))
+                    .map(|vd| (vd.id as i128, vd.description.clone()))
                     .collect(),
                 ..Default::default()
             };
@@ -711,19 +711,11 @@ impl Parser {
         )?;
 
         // Convert to signed if needed
-        let raw_value_with_sign = if signal_def.value_type == can_dbc::ValueType::Signed {
-            // Convert to signed based on signal size
-            let max_unsigned = low_bits_mask!(signal_def.size as usize, u64);
-            let sign_bit = 1u64 << (signal_def.size - 1);
-
-            if raw_value & sign_bit != 0 {
-                // Negative number - extend sign
-                (raw_value | (!max_unsigned)) as i64
-            } else {
-                raw_value as i64
-            }
+        let raw_value_with_sign: i128 = if signal_def.value_type == can_dbc::ValueType::Signed {
+            let shift = 128u32.saturating_sub(signal_def.size as u32);
+            ((raw_value as i128) << shift) >> shift
         } else {
-            raw_value as i64
+            raw_value as i128
         };
 
         // Check if this signal has an enum definition
@@ -1076,25 +1068,17 @@ impl Parser {
 
         // For integer signals, convert and handle signed/unsigned representation
         let raw_int = if signal_def.value_type == can_dbc::ValueType::Signed {
-            // Convert the physical value to a signed integer
             let signed_val = scaled_value.round() as i64;
-            // Calculate the valid range for N-bit signed integers
-            // Range: -(2^(N-1)) to (2^(N-1) - 1)
-            let max_value = (1i64 << (signal_def.size - 1)) - 1;
-            let min_value = -(1i64 << (signal_def.size - 1));
+            // Use i128 to avoid overflow when size==64
+            let max_value = ((1i128 << (signal_def.size - 1)) - 1) as i64;
+            let min_value = -(1i128 << (signal_def.size - 1)) as i64;
 
-            // Clamp the value to the valid signed range
             let clamped = signed_val.max(min_value).min(max_value);
 
-            // Convert negative values to two's complement bit pattern
-            if clamped < 0 {
-                let mask = low_bits_mask!(signal_def.size as usize, u64);
-                (clamped as u64) & mask
-            } else {
-                clamped as u64
-            }
+            // Two's complement: negative values cast to u64 already gives correct bit pattern
+            let mask = low_bits_mask!(signal_def.size as usize, u64);
+            (clamped as u64) & mask
         } else {
-            // For unsigned signals, clamp to the maximum unsigned value
             let unsigned_val = scaled_value.round() as u64;
             let max_value = low_bits_mask!(signal_def.size as usize, u64);
             unsigned_val.min(max_value)
