@@ -128,7 +128,7 @@ pub struct DecodedSignalValue {
     /// The physical value of the signal after applying scaling and offset.
     pub physical: f64,
     /// Contains the raw integer value (with sign accounting).
-    /// Present unless the signal is a IEEE float/double.
+    /// Present unless the signal is an IEEE float/double.
     pub raw: Option<i64>,
     /// If the signal has an enum mapping, this contains the raw value and the corresponding enum label.
     pub enum_label: Option<String>,
