@@ -1220,26 +1220,6 @@ impl Parser {
     ///
     /// A vector containing all message definitions that have been loaded
     /// from DBC files. O(n) to convert from internal map.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use can_decode::Parser;
-    /// use std::path::Path;
-    ///
-    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let parser = Parser::from_dbc_file(Path::new("my_database.dbc"))?;
-    ///
-    /// for msg in parser.msg_defs() {
-    ///     println!("Message: {} (ID: {:#X})", msg.name,
-    ///              match msg.id {
-    ///                  can_dbc::MessageId::Standard(id) => id as u32,
-    ///                  can_dbc::MessageId::Extended(id) => id,
-    ///              });
-    /// }
-    /// # Ok(())
-    /// # }
-    /// ```
     pub fn msg_defs(&self) -> Vec<can_dbc::Message> {
         self.msg_entries
             .values()
@@ -1257,22 +1237,6 @@ impl Parser {
     ///
     /// Returns a reference to the message definition if found, or `None` if
     /// the message ID is not known.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use can_decode::Parser;
-    /// use std::path::Path;
-    ///
-    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let parser = Parser::from_dbc_file(Path::new("my_database.dbc"))?;
-    ///
-    /// if let Some(msg_def) = parser.msg_def(0x123) {
-    ///     println!("Message: {}", msg_def.name);
-    /// }
-    /// # Ok(())
-    /// # }
-    ///
     pub fn msg_def(&self, msg_id: u32) -> Option<&can_dbc::Message> {
         self.msg_entries.get(&msg_id).map(|entry| &entry.msg_def)
     }
