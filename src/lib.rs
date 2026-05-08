@@ -149,7 +149,7 @@ pub struct DecodedSignal {
     pub unit: String,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum FloatFormat {
     F32,
     F64,
@@ -364,6 +364,44 @@ impl Parser {
                 let msg_id = sig_ext_val_typ.message_id.raw();
                 let format_def = FormatDef::new_float(float_format);
                 if let Some(msg_entry) = self.msg_entries.get_mut(&msg_id) {
+                    let signal_name = &sig_ext_val_typ.signal_name;
+                    let signal_def = msg_entry
+                        .msg_def
+                        .signals
+                        .iter()
+                        .find(|s| s.name == *signal_name);
+
+                    if let Some(signal_def) = signal_def {
+                        if signal_def.size != 32 && float_format == FloatFormat::F32 {
+                            log::warn!(
+                                "Signal '{}' in message ID {:#X} marked as f32 but size is {} bits. \
+                                Skipping float definition.",
+                                signal_name,
+                                msg_id,
+                                signal_def.size
+                            );
+                            continue;
+                        }
+                        if signal_def.size != 64 && float_format == FloatFormat::F64 {
+                            log::warn!(
+                                "Signal '{}' in message ID {:#X} marked as f64 but size is {} bits. \
+                                Skipping float definition.",
+                                signal_name,
+                                msg_id,
+                                signal_def.size
+                            );
+                            continue;
+                        }
+                    } else {
+                        log::warn!(
+                            "Float definition for signal '{}' references unknown signal in message ID {:#X}. \
+                            Skipping.",
+                            signal_name,
+                            msg_id
+                        );
+                        continue;
+                    }
+
                     if let Some(existing) =
                         msg_entry.format_defs.get_mut(&sig_ext_val_typ.signal_name)
                     {
@@ -564,34 +602,10 @@ impl Parser {
             .and_then(|entry| entry.format_defs.get(&signal_def.name))
             .and_then(|format_def| format_def.float_format);
         if let Some(float_format) = float_def {
+            // Note: signal sizes are validated when loading the DBC, so we can assume 32 bits for f32 and 64 bits for f64
             let float_value = match float_format {
-                FloatFormat::F32 => {
-                    // TODO: do this at initalization time
-                    if signal_def.size != 32 {
-                        log::warn!(
-                            "Signal {} marked as f32 but size is {} bits",
-                            signal_def.name,
-                            signal_def.size
-                        );
-                        return None;
-                    }
-
-                    f32::from_bits(raw_value as u32) as f64
-                }
-
-                FloatFormat::F64 => {
-                    // TODO: do this at initalization time
-                    if signal_def.size != 64 {
-                        log::warn!(
-                            "Signal {} marked as f64 but size is {} bits",
-                            signal_def.name,
-                            signal_def.size
-                        );
-                        return None;
-                    }
-
-                    f64::from_bits(raw_value)
-                }
+                FloatFormat::F32 => f32::from_bits(raw_value as u32) as f64,
+                FloatFormat::F64 => f64::from_bits(raw_value),
             };
             let scaled_value = float_value * signal_def.factor + signal_def.offset;
             return Some(DecodedSignal {
@@ -832,29 +846,10 @@ impl Parser {
             .and_then(|entry| entry.format_defs.get(&signal_def.name))
             .and_then(|format_def| format_def.float_format);
         if let Some(float_format) = float_def {
+            // Note: signal sizes are validated when loading the DBC, so we can assume 32 bits for f32 and 64 bits for f64
             let float_data = match float_format {
-                FloatFormat::F32 => {
-                    if signal_def.size != 32 {
-                        log::warn!(
-                            "Signal {} marked as f32 but size is {} bits",
-                            signal_def.name,
-                            signal_def.size
-                        );
-                        return None;
-                    }
-                    (scaled_value as f32).to_bits() as u64
-                }
-                FloatFormat::F64 => {
-                    if signal_def.size != 64 {
-                        log::warn!(
-                            "Signal {} marked as f64 but size is {} bits",
-                            signal_def.name,
-                            signal_def.size
-                        );
-                        return None;
-                    }
-                    scaled_value.to_bits()
-                }
+                FloatFormat::F32 => (scaled_value as f32).to_bits() as u64,
+                FloatFormat::F64 => scaled_value.to_bits(),
             };
             return self.insert_signal_value(
                 data,
