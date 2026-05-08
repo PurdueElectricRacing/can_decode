@@ -163,6 +163,13 @@ impl FloatFormat {
             can_dbc::SignalExtendedValueType::SignedOrUnsignedInteger => None,
         }
     }
+
+    pub fn bit_size(&self) -> usize {
+        match self {
+            FloatFormat::F32 => 32,
+            FloatFormat::F64 => 64,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -311,6 +318,8 @@ impl Parser {
             log::error!("Failed to parse DBC: {:?}", e);
             format!("{:?}", e)
         })?;
+
+        // Insert message definitions
         for msg_def in dbc.messages {
             let msg_id = msg_def.id.raw();
             if self.msg_entries.contains_key(&msg_id) {
@@ -321,42 +330,52 @@ impl Parser {
             }
             self.msg_entries.insert(msg_id, MsgEntry::new(msg_def));
         }
+
+        // Enum handling
         for val_desc in dbc.value_descriptions {
-            if let can_dbc::ValueDescription::Signal {
+            let can_dbc::ValueDescription::Signal {
                 message_id,
                 name,
                 value_descriptions,
             } = val_desc
-            {
-                let msg_id = message_id.raw();
-                let enum_def = FormatDef::new_enum(
-                    value_descriptions
-                        .iter()
-                        .map(|vd| (vd.id, vd.description.clone()))
-                        .collect(),
+            else {
+                continue;
+            };
+
+            let msg_id = message_id.raw();
+
+            let Some(msg_entry) = self.msg_entries.get_mut(&msg_id) else {
+                log::warn!(
+                    "Value description for signal '{}' references unknown message ID {:#X}. \
+                    Skipping.",
+                    name,
+                    msg_id
                 );
-                if let Some(msg_entry) = self.msg_entries.get_mut(&msg_id) {
-                    if let Some(existing) = msg_entry.format_defs.get_mut(&name) {
-                        existing.enum_map = enum_def.enum_map;
-                        log::warn!(
-                            "Duplicate value description for signal '{}' in message ID {:#X}. \
-                            Overwriting existing enum definition.",
-                            name,
-                            msg_id
-                        );
-                    } else {
-                        msg_entry.format_defs.insert(name.clone(), enum_def);
-                    }
-                } else {
-                    log::warn!(
-                        "Value description for signal '{}' references unknown message ID {:#X}. \
-                        Skipping.",
-                        name,
-                        msg_id
-                    );
-                }
+                continue;
+            };
+
+            let enum_def = FormatDef::new_enum(
+                value_descriptions
+                    .iter()
+                    .map(|vd| (vd.id, vd.description.clone()))
+                    .collect(),
+            );
+
+            if let Some(existing) = msg_entry.format_defs.get_mut(&name) {
+                existing.enum_map = enum_def.enum_map;
+
+                log::warn!(
+                    "Duplicate value description for signal '{}' in message ID {:#X}. \
+            Overwriting existing enum definition.",
+                    name,
+                    msg_id
+                );
+            } else {
+                msg_entry.format_defs.insert(name.clone(), enum_def);
             }
         }
+
+        // Float handling
         for sig_ext_val_typ in dbc.signal_extended_value_type_list {
             let Some(float_format) =
                 FloatFormat::from_dbc_def(sig_ext_val_typ.signal_extended_value_type)
