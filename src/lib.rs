@@ -104,7 +104,6 @@ macro_rules! low_bits_mask {
 /// This allows downstream crates to reference the signal map type without
 /// needing to add indexmap as a dependency.
 pub type SignalMap = indexmap::map::IndexMap<String, DecodedSignal>;
-
 /// A decoded CAN message containing signal values.
 ///
 /// This structure represents a fully decoded CAN message with all its signals
@@ -185,7 +184,7 @@ pub struct DecodedSignal {
 ///
 /// Used internally to properly decode and encode signals that are stored as
 /// IEEE-754 floating-point values in CAN messages (via the `SIG_VALTYPE_` DBC field).
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum FloatFormat {
     /// 32-bit IEEE-754 single-precision float (f32)
     F32,
@@ -230,7 +229,7 @@ impl FloatFormat {
 /// Encapsulates optional formatting information for a signal, including
 /// enum mappings (for value descriptions) and float format specifications
 /// (for IEEE-754 encoded signals).
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct FormatDef {
     /// Maps raw signal values to string enum labels from DBC value descriptions.
     pub enum_map: std::collections::HashMap<i64, String>,
@@ -276,6 +275,7 @@ impl FormatDef {
 ///
 /// Stores both the base DBC message definition and the signal-specific format
 /// metadata (enums and float formats) in a unified structure.
+#[derive(Debug, Clone)]
 pub struct MsgEntry {
     /// The base DBC message definition containing signals and metadata.
     pub msg_def: can_dbc::Message,
@@ -324,6 +324,7 @@ impl MsgEntry {
 /// # Ok(())
 /// # }
 /// ```
+#[derive(Debug, Clone)]
 pub struct Parser {
     msg_entries: std::collections::HashMap<u32, MsgEntry>,
 }
