@@ -603,7 +603,7 @@ impl Parser {
             .and_then(|entry| entry.format_defs.get(&signal_def.name));
         if let Some(format_def) = format_def {
             if let Some(enum_str) = format_def.enum_map.get(&raw_value_with_sign) {
-                 return Some(DecodedSignal {
+                return Some(DecodedSignal {
                     name: signal_def.name.clone(),
                     value: DecodedSignalValue::Enum(raw_value_with_sign, enum_str.clone()),
                     unit: signal_def.unit.clone(),
