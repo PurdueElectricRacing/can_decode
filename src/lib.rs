@@ -597,18 +597,26 @@ impl Parser {
         };
 
         // Check if this signal has an enum definition
-        let enum_name = self
+        let format_def = self
             .msg_entries
             .get(&msg_id)
-            .and_then(|entry| entry.format_defs.get(&signal_def.name))
-            .and_then(|format_def| format_def.enum_map.get(&raw_value_with_sign))
-            .cloned();
-        if let Some(enum_str) = enum_name {
-            return Some(DecodedSignal {
-                name: signal_def.name.clone(),
-                value: DecodedSignalValue::Enum(raw_value_with_sign, enum_str),
-                unit: signal_def.unit.clone(),
-            });
+            .and_then(|entry| entry.format_defs.get(&signal_def.name));
+        if let Some(format_def) = format_def {
+            if let Some(enum_str) = format_def.enum_map.get(&raw_value_with_sign) {
+                 return Some(DecodedSignal {
+                    name: signal_def.name.clone(),
+                    value: DecodedSignalValue::Enum(raw_value_with_sign, enum_str.clone()),
+                    unit: signal_def.unit.clone(),
+                });
+            } else {
+                log::warn!(
+                    "Raw value {} for signal '{}' in message ID {:#X} does not have a corresponding enum label. \
+                    Returning raw value as numeric.",
+                    raw_value_with_sign,
+                    signal_def.name,
+                    msg_id
+                );
+            }
         }
 
         // Check for float definition
