@@ -201,12 +201,12 @@ impl FloatFormat {
     }
 }
 
-#[derive(Clone)]
 /// Format definition for a signal's value interpretation.
 ///
 /// Encapsulates optional formatting information for a signal, including
 /// enum mappings (for value descriptions) and float format specifications
 /// (for IEEE-754 encoded signals).
+#[derive(Clone)]
 pub struct FormatDef {
     /// Maps raw signal values to string enum labels from DBC value descriptions.
     pub enum_map: std::collections::HashMap<i64, String>,
