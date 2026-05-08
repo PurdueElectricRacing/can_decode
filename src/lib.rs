@@ -358,73 +358,75 @@ impl Parser {
             }
         }
         for sig_ext_val_typ in dbc.signal_extended_value_type_list {
-            if let Some(float_format) =
+            let Some(float_format) =
                 FloatFormat::from_dbc_def(sig_ext_val_typ.signal_extended_value_type)
-            {
-                let msg_id = sig_ext_val_typ.message_id.raw();
-                let format_def = FormatDef::new_float(float_format);
-                if let Some(msg_entry) = self.msg_entries.get_mut(&msg_id) {
-                    let signal_name = &sig_ext_val_typ.signal_name;
-                    let signal_def = msg_entry
-                        .msg_def
-                        .signals
-                        .iter()
-                        .find(|s| s.name == *signal_name);
+            else {
+                continue;
+            };
 
-                    if let Some(signal_def) = signal_def {
-                        if signal_def.size != 32 && float_format == FloatFormat::F32 {
-                            log::warn!(
-                                "Signal '{}' in message ID {:#X} marked as f32 but size is {} bits. \
-                                Skipping float definition.",
-                                signal_name,
-                                msg_id,
-                                signal_def.size
-                            );
-                            continue;
-                        }
-                        if signal_def.size != 64 && float_format == FloatFormat::F64 {
-                            log::warn!(
-                                "Signal '{}' in message ID {:#X} marked as f64 but size is {} bits. \
-                                Skipping float definition.",
-                                signal_name,
-                                msg_id,
-                                signal_def.size
-                            );
-                            continue;
-                        }
-                    } else {
-                        log::warn!(
-                            "Float definition for signal '{}' references unknown signal in message ID {:#X}. \
-                            Skipping.",
-                            signal_name,
-                            msg_id
-                        );
-                        continue;
-                    }
+            let msg_id = sig_ext_val_typ.message_id.raw();
+            let signal_name = &sig_ext_val_typ.signal_name;
 
-                    if let Some(existing) =
-                        msg_entry.format_defs.get_mut(&sig_ext_val_typ.signal_name)
-                    {
-                        existing.float_format = format_def.float_format;
-                        log::warn!(
-                            "Duplicate float definition for signal '{}' in message ID {:#X}. \
-                            Overwriting existing float definition.",
-                            sig_ext_val_typ.signal_name,
-                            msg_id
-                        );
-                    } else {
-                        msg_entry
-                            .format_defs
-                            .insert(sig_ext_val_typ.signal_name.clone(), format_def);
-                    }
-                } else {
-                    log::warn!(
-                        "Float definition for signal '{}' references unknown message ID {:#X}. \
-                        Skipping.",
-                        sig_ext_val_typ.signal_name,
-                        msg_id
-                    );
-                }
+            let Some(msg_entry) = self.msg_entries.get_mut(&msg_id) else {
+                log::warn!(
+                    "Float definition for signal '{}' references unknown message ID {:#X}. \
+                    Skipping.",
+                    signal_name,
+                    msg_id
+                );
+                continue;
+            };
+
+            let Some(signal_def) = msg_entry
+                .msg_def
+                .signals
+                .iter()
+                .find(|s| s.name == *signal_name)
+            else {
+                log::warn!(
+                    "Float definition for signal '{}' references unknown signal in message ID {:#X}. \
+                    Skipping.",
+                    signal_name,
+                    msg_id
+                );
+                continue;
+            };
+
+            let expected_size = match float_format {
+                FloatFormat::F32 => 32,
+                FloatFormat::F64 => 64,
+            };
+
+            if signal_def.size != expected_size {
+                log::warn!(
+                    "Signal '{}' in message ID {:#X} marked as {} but size is {} bits. \
+                    Skipping float definition.",
+                    signal_name,
+                    msg_id,
+                    match float_format {
+                        FloatFormat::F32 => "f32",
+                        FloatFormat::F64 => "f64",
+                    },
+                    signal_def.size
+                );
+                continue;
+            }
+
+            let format_def = FormatDef::new_float(float_format);
+
+            if let Some(existing) = msg_entry.format_defs.get_mut(signal_name) {
+                existing.float_format = format_def.float_format;
+
+                log::warn!(
+                    "Duplicate float definition for signal '{}' in message ID {:#X}. \
+                    Overwriting existing float definition.",
+                    signal_name,
+                    msg_id
+                );
+            } else {
+                msg_entry
+                    .format_defs
+                    .insert(signal_name.clone(), format_def);
             }
         }
         Ok(())
