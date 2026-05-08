@@ -1214,12 +1214,12 @@ impl Parser {
         Some(msg_entry.msg_def.signals.clone())
     }
 
-    /// Returns all loaded message definitions.
+    /// Returns all loaded can_dbc message definitions.
     ///
     /// # Returns
     ///
     /// A vector containing all message definitions that have been loaded
-    /// from DBC files.
+    /// from DBC files. O(n) to convert from internal map.
     ///
     /// # Example
     ///
@@ -1247,7 +1247,7 @@ impl Parser {
             .collect()
     }
 
-    /// Returns the message definition for a given message ID.
+    /// Returns the can_dbc message definition for a given message ID. O(1) lookup.
     ///
     /// # Arguments
     ///
@@ -1275,6 +1275,38 @@ impl Parser {
     ///
     pub fn msg_def(&self, msg_id: u32) -> Option<&can_dbc::Message> {
         self.msg_entries.get(&msg_id).map(|entry| &entry.msg_def)
+    }
+
+    /// Returns a reference to the internal message entries map.
+    ///
+    /// This provides access to all loaded messages indexed by their CAN message IDs,
+    /// including their format definitions (enums and float types).
+    ///
+    /// # Returns
+    ///
+    /// A reference to the HashMap mapping message IDs to `MsgEntry` structures.
+    /// Each `MsgEntry` contains both the DBC message definition and its associated
+    /// format metadata.
+    pub fn msg_entries(&self) -> &std::collections::HashMap<u32, MsgEntry> {
+        &self.msg_entries
+    }
+
+    /// Returns the message entry for a given message ID. O(1) lookup.
+    ///
+    /// Provides access to both the DBC message definition and its format definitions
+    /// (enums and float type specifications) for a specific message ID.
+    ///
+    /// # Arguments
+    ///
+    /// * `msg_id` - The CAN message identifier
+    ///
+    /// # Returns
+    ///
+    /// Returns a reference to the `MsgEntry` if found, or `None` if the message ID
+    /// is not known. The `MsgEntry` contains both `msg_def` (the DBC definition) and
+    /// `format_defs` (the signal formatting metadata).
+    pub fn msg_entry(&self, msg_id: u32) -> Option<&MsgEntry> {
+        self.msg_entries.get(&msg_id)
     }
 
     /// Clears all loaded message definitions.
