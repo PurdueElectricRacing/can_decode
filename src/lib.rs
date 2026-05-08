@@ -124,22 +124,46 @@ pub struct DecodedMessage {
 }
 
 /// Represents the decoded value of a CAN signal.
-///
-/// Signals can be either numeric (physical values after scaling) or enumerated
-/// (string labels mapped from raw values via DBC value descriptions).
 #[derive(Debug, Clone)]
-pub enum DecodedSignalValue {
-    /// Numeric signal value.
-    ///
-    /// For integer or IEEE float/double signals, this is the physical value
-    /// after applying the factor and offset from the signal definition.
-    /// The scaling formula applied is: `physical_value = raw_value * factor + offset`
-    Numeric(f64),
-    /// An enumerated signal value.
-    ///
-    /// Contains both the raw integer value (with sign accounting) and its
-    /// corresponding string label as defined in the DBC value descriptions.
-    Enum(i64, String),
+pub struct DecodedSignalValue {
+    // The physical value of the signal after applying scaling and offset.
+    pub physical: f64,
+    /// Contains the raw integer value (with sign accounting).
+    /// Present unless the signal is a IEEE float/double.
+    pub raw: Option<i64>,
+    // If the signal has an enum mapping, this contains the raw value and the corresponding enum label.
+    pub enum_label: Option<String>,
+}
+
+impl DecodedSignalValue {
+    /// Creates a new `DecodedSignalValue` for a numeric signal that is backed by
+    /// an integer (signed or unsigned).
+    pub fn new_integer_backed_numeric(physical: f64, raw_value: i64) -> Self {
+        Self {
+            physical,
+            raw: Some(raw_value),
+            enum_label: None,
+        }
+    }
+
+    /// Creates a new `DecodedSignalValue` for a numeric signal that is backed
+    /// by an IEEE-754 float/double.
+    pub fn new_float_backed_numeric(physical: f64) -> Self {
+        Self {
+            physical,
+            raw: None,
+            enum_label: None,
+        }
+    }
+
+    /// Creates a new `DecodedSignalValue` for an enumerated signal.
+    pub fn new_enum(physical: f64, raw_value: i64, enum_label: String) -> Self {
+        Self {
+            physical,
+            raw: Some(raw_value),
+            enum_label: Some(enum_label),
+        }
+    }
 }
 
 /// A decoded signal with its physical value.
@@ -671,9 +695,14 @@ impl Parser {
             .and_then(|entry| entry.format_defs.get(&signal_def.name));
         if let Some(format_def) = format_def {
             if let Some(enum_str) = format_def.enum_map.get(&raw_value_with_sign) {
+                let physical = raw_value_with_sign as f64 * signal_def.factor + signal_def.offset;
                 return Some(DecodedSignal {
                     name: signal_def.name.clone(),
-                    value: DecodedSignalValue::Enum(raw_value_with_sign, enum_str.clone()),
+                    value: DecodedSignalValue::new_enum(
+                        physical,
+                        raw_value_with_sign,
+                        enum_str.clone(),
+                    ),
                     unit: signal_def.unit.clone(),
                 });
             } else {
@@ -702,7 +731,7 @@ impl Parser {
             let scaled_value = float_value * signal_def.factor + signal_def.offset;
             return Some(DecodedSignal {
                 name: signal_def.name.clone(),
-                value: DecodedSignalValue::Numeric(scaled_value),
+                value: DecodedSignalValue::new_float_backed_numeric(scaled_value),
                 unit: signal_def.unit.clone(),
             });
         }
@@ -711,7 +740,10 @@ impl Parser {
         let scaled_value = raw_value_with_sign as f64 * signal_def.factor + signal_def.offset;
         Some(DecodedSignal {
             name: signal_def.name.clone(),
-            value: DecodedSignalValue::Numeric(scaled_value),
+            value: DecodedSignalValue::new_integer_backed_numeric(
+                scaled_value,
+                raw_value_with_sign,
+            ),
             unit: signal_def.unit.clone(),
         })
     }
