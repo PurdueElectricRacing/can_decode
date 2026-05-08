@@ -1241,7 +1241,7 @@ impl Parser {
         self.msg_entries.get(&msg_id).map(|entry| &entry.msg_def)
     }
 
-    /// Returns a reference to the internal message entries map.
+    /// Exposes the internal message entries map.
     ///
     /// This provides access to all loaded messages indexed by their CAN message IDs,
     /// including their format definitions (enums and float types).
