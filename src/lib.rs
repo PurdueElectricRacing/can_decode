@@ -269,7 +269,7 @@ impl MsgEntry {
     /// # Returns
     ///
     /// A new `MsgEntry` with the message definition, and empty description, and
-    /// an empty format definitions map.
+    /// an empty signal metadata map (to be populated with enums, float formats, and comments).
     fn new(msg_def: can_dbc::Message) -> Self {
         Self {
             msg_def,
