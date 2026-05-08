@@ -126,10 +126,11 @@ pub struct DecodedMessage {
 pub enum DecodedSignalValue {
     /// Numeric signal value.
     ///
-    /// For integer or IEEE float/double backed signals this is the physical value
-    /// after applying factor and offset
+    /// For integer or IEEE float/double signals backed signals this is the physical
+    /// value after applying factor and offset.
     Numeric(f64),
-    /// The raw value and the string value for an enumerated signal (if defined in the DBC)
+    /// The raw value (with signed-ness accounted for) and the string value for
+    /// an enumerated signal (if defined in the DBC)
     Enum(i64, String),
 }
 
@@ -148,25 +149,64 @@ pub struct DecodedSignal {
     pub unit: String,
 }
 
-/// Value-description mapping for a specific signal.
-///
-/// DBC files can define enum-like value descriptions per signal, such as
-/// `0 = "Off"`, `1 = "On"`. This structure stores those mappings so decoded
-/// raw values can be returned as human-readable labels.
-#[derive(Debug, Clone)]
-pub struct EnumDef {
-    /// Signal name this value-description map belongs to.
-    pub signal_name: String,
-    /// Map from raw integer signal value to label.
-    pub enum_map: std::collections::HashMap<i64, String>,
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum FloatFormat {
+    F32,
+    F64,
 }
 
-#[derive(Debug, Clone)]
-pub struct FloatDef {
-    /// Signal name this float-type definition belongs to.
-    pub signal_name: String,
-    /// The DBC extended value type (`IEEEfloat32Bit` or `IEEEdouble64bit`).
-    pub float_def: can_dbc::SignalExtendedValueType,
+impl FloatFormat {
+    pub fn from_dbc_def(def: can_dbc::SignalExtendedValueType) -> Option<Self> {
+        match def {
+            can_dbc::SignalExtendedValueType::IEEEfloat32Bit => Some(FloatFormat::F32),
+            can_dbc::SignalExtendedValueType::IEEEdouble64bit => Some(FloatFormat::F64),
+            can_dbc::SignalExtendedValueType::SignedOrUnsignedInteger => None,
+        }
+    }
+
+    pub fn bit_size(&self) -> usize {
+        match self {
+            FloatFormat::F32 => 32,
+            FloatFormat::F64 => 64,
+        }
+    }
+}
+
+#[derive(Clone)]
+
+pub struct FormatDef {
+    pub enum_map: std::collections::HashMap<i64, String>,
+    pub float_format: Option<FloatFormat>,
+}
+
+impl FormatDef {
+    pub fn new_enum(enum_map: std::collections::HashMap<i64, String>) -> Self {
+        Self {
+            enum_map,
+            float_format: None,
+        }
+    }
+
+    pub fn new_float(float_format: FloatFormat) -> Self {
+        Self {
+            enum_map: std::collections::HashMap::new(),
+            float_format: Some(float_format),
+        }
+    }
+}
+
+pub struct MsgEntry {
+    pub msg_def: can_dbc::Message,
+    pub format_defs: std::collections::HashMap<String, FormatDef>, // signal name -> format definition
+}
+
+impl MsgEntry {
+    fn new(msg_def: can_dbc::Message) -> Self {
+        Self {
+            msg_def,
+            format_defs: std::collections::HashMap::new(),
+        }
+    }
 }
 
 /// A CAN message parser that uses DBC file definitions.
@@ -193,14 +233,7 @@ pub struct FloatDef {
 /// # }
 /// ```
 pub struct Parser {
-    /// Map of message ID to message definitions
-    msg_defs: std::collections::HashMap<u32, can_dbc::Message>,
-
-    /// Map of message ID to per-signal enum/value-description mappings.
-    enum_defs: std::collections::HashMap<u32, Vec<EnumDef>>,
-
-    /// Map of message ID to per-signal IEEE float/double definitions.
-    float_defs: std::collections::HashMap<u32, Vec<FloatDef>>,
+    msg_entries: std::collections::HashMap<u32, MsgEntry>,
 }
 
 impl Parser {
@@ -218,9 +251,7 @@ impl Parser {
     /// ```
     pub fn new() -> Self {
         Self {
-            msg_defs: std::collections::HashMap::new(),
-            enum_defs: std::collections::HashMap::new(),
-            float_defs: std::collections::HashMap::new(),
+            msg_entries: std::collections::HashMap::new(),
         }
     }
 
@@ -287,76 +318,129 @@ impl Parser {
             log::error!("Failed to parse DBC: {:?}", e);
             format!("{:?}", e)
         })?;
+
+        // Insert message definitions
         for msg_def in dbc.messages {
             let msg_id = msg_def.id.raw();
-            if self.msg_defs.contains_key(&msg_id) {
+            if self.msg_entries.contains_key(&msg_id) {
                 log::warn!(
                     "Duplicate message ID {msg_id:#X} ({}). Overwriting existing definition.",
                     msg_def.name
                 );
             }
-            self.msg_defs.insert(msg_id, msg_def.clone());
+            self.msg_entries.insert(msg_id, MsgEntry::new(msg_def));
         }
-        for val_desc in dbc.value_descriptions {
-            match val_desc {
-                can_dbc::ValueDescription::Signal {
-                    message_id,
-                    name,
-                    value_descriptions,
-                } => {
-                    let msg_id = message_id.raw();
-                    let enum_def = EnumDef {
-                        signal_name: name.clone(),
-                        enum_map: value_descriptions
-                            .iter()
-                            .map(|vd| (vd.id, vd.description.clone()))
-                            .collect(),
-                    };
-                    let entry = self.enum_defs.entry(msg_id).or_default();
-                    if let Some(existing) = entry
-                        .iter_mut()
-                        .find(|e| e.signal_name == enum_def.signal_name)
-                    {
-                        *existing = enum_def;
-                        log::warn!(
-                            "Duplicate value description for signal '{}' in message ID {:#X}. \
-                            Overwriting existing enum definition.",
-                            name,
-                            msg_id
-                        );
-                    } else {
-                        entry.push(enum_def);
-                    }
-                }
-                can_dbc::ValueDescription::EnvironmentVariable { .. } => {}
-            }
-        }
-        for sig_ext_val_typ in dbc.signal_extended_value_type_list {
-            if sig_ext_val_typ.signal_extended_value_type
-                == can_dbc::SignalExtendedValueType::SignedOrUnsignedInteger
-            {
-                continue;
-            }
 
-            let msg_id = sig_ext_val_typ.message_id.raw();
-            let float_def = FloatDef {
-                signal_name: sig_ext_val_typ.signal_name.clone(),
-                float_def: sig_ext_val_typ.signal_extended_value_type,
+        // Enum handling
+        for val_desc in dbc.value_descriptions {
+            let can_dbc::ValueDescription::Signal {
+                message_id,
+                name,
+                value_descriptions,
+            } = val_desc
+            else {
+                continue;
             };
-            let entry = self.float_defs.entry(msg_id).or_default();
-            if let Some(existing) = entry
-                .iter_mut()
-                .find(|e| e.signal_name == float_def.signal_name)
-            {
-                *existing = float_def.clone();
+
+            let msg_id = message_id.raw();
+
+            let Some(msg_entry) = self.msg_entries.get_mut(&msg_id) else {
                 log::warn!(
-                    "Duplicate float definition for signal '{}' in message ID {:#X}. \
-                    Overwriting existing float definition.",
-                    float_def.signal_name,
+                    "Value description for signal '{}' references unknown message ID {:#X}. \
+                    Skipping.",
+                    name,
+                    msg_id
+                );
+                continue;
+            };
+
+            let enum_def = FormatDef::new_enum(
+                value_descriptions
+                    .iter()
+                    .map(|vd| (vd.id, vd.description.clone()))
+                    .collect(),
+            );
+
+            if let Some(existing) = msg_entry.format_defs.get_mut(&name) {
+                existing.enum_map = enum_def.enum_map;
+
+                log::warn!(
+                    "Duplicate value description for signal '{}' in message ID {:#X}. \
+            Overwriting existing enum definition.",
+                    name,
                     msg_id
                 );
             } else {
-                entry.push(float_def);
+                msg_entry.format_defs.insert(name.clone(), enum_def);
+            }
+        }
+
+        // Float handling
+        for sig_ext_val_typ in dbc.signal_extended_value_type_list {
+            let Some(float_format) =
+                FloatFormat::from_dbc_def(sig_ext_val_typ.signal_extended_value_type)
+            else {
+                continue;
+            };
+
+            let msg_id = sig_ext_val_typ.message_id.raw();
+            let signal_name = &sig_ext_val_typ.signal_name;
+
+            let Some(msg_entry) = self.msg_entries.get_mut(&msg_id) else {
+                log::warn!(
+                    "Float definition for signal '{}' references unknown message ID {:#X}. \
+                    Skipping.",
+                    signal_name,
+                    msg_id
+                );
+                continue;
+            };
+
+            let Some(signal_def) = msg_entry
+                .msg_def
+                .signals
+                .iter()
+                .find(|s| s.name == *signal_name)
+            else {
+                log::warn!(
+                    "Float definition for signal '{}' references unknown signal in message ID {:#X}. \
+                    Skipping.",
+                    signal_name,
+                    msg_id
+                );
+                continue;
+            };
+
+            if signal_def.size != float_format.bit_size() as u64 {
+                log::warn!(
+                    "Signal '{}' in message ID {:#X} marked as {} but size is {} bits. \
+                    Skipping float definition.",
+                    signal_name,
+                    msg_id,
+                    match float_format {
+                        FloatFormat::F32 => "f32",
+                        FloatFormat::F64 => "f64",
+                    },
+                    signal_def.size
+                );
+                continue;
+            }
+
+            let format_def = FormatDef::new_float(float_format);
+
+            if let Some(existing) = msg_entry.format_defs.get_mut(signal_name) {
+                existing.float_format = format_def.float_format;
+
+                log::warn!(
+                    "Duplicate float definition for signal '{}' in message ID {:#X}. \
+                    Overwriting existing float definition.",
+                    signal_name,
+                    msg_id
+                );
+            } else {
+                msg_entry
+                    .format_defs
+                    .insert(signal_name.clone(), format_def);
             }
         }
         Ok(())
@@ -441,15 +525,17 @@ impl Parser {
     pub fn decode_msg(&self, msg_id: u32, data: &[u8]) -> Option<DecodedMessage> {
         // Grab msg metadata and then for every signal in the message, decode it and add
         // to the decoded message
-        let msg_def = self.msg_defs.get(&msg_id)?;
-        let is_extended = matches!(msg_def.id, can_dbc::MessageId::Extended(_));
-        let tx_node = match &msg_def.transmitter {
+
+        let msg_entry = self.msg_entries.get(&msg_id)?;
+
+        let is_extended = matches!(msg_entry.msg_def.id, can_dbc::MessageId::Extended(_));
+        let tx_node = match &msg_entry.msg_def.transmitter {
             can_dbc::Transmitter::NodeName(name) => name.clone(),
             can_dbc::Transmitter::VectorXXX => "Unknown".to_string(),
         };
         let mut decoded_signals = SignalMap::new();
 
-        for signal_def in &msg_def.signals {
+        for signal_def in &msg_entry.msg_def.signals {
             match self.decode_signal(msg_id, signal_def, data) {
                 Some(decoded_signal) => {
                     decoded_signals.insert(decoded_signal.name.to_string(), decoded_signal);
@@ -458,7 +544,7 @@ impl Parser {
                     log::error!(
                         "Failed to decode signal {} from message {}",
                         signal_def.name,
-                        msg_def.name
+                        msg_entry.msg_def.name
                     );
                     return None;
                 }
@@ -466,7 +552,7 @@ impl Parser {
         }
 
         Some(DecodedMessage {
-            name: msg_def.name.clone(),
+            name: msg_entry.msg_def.name.clone(),
             msg_id,
             is_extended,
             tx_node,
@@ -511,84 +597,55 @@ impl Parser {
         };
 
         // Check if this signal has an enum definition
-        let enum_name = self
-            .enum_defs
+        let format_def = self
+            .msg_entries
             .get(&msg_id)
-            .and_then(|enums| {
-                enums
-                    .iter()
-                    .find(|e| e.signal_name == signal_def.name)
-                    .and_then(|e| e.enum_map.get(&raw_value_with_sign))
-            })
-            .cloned();
-
-        if let Some(enum_str) = enum_name {
-            Some(DecodedSignal {
-                name: signal_def.name.clone(),
-                value: DecodedSignalValue::Enum(raw_value_with_sign, enum_str),
-                unit: signal_def.unit.clone(),
-            })
-        } else {
-            // Check for float definition
-            if let Some(float_def) = self.float_defs.get(&msg_id).and_then(|floats| {
-                floats
-                    .iter()
-                    .find(|f| f.signal_name == signal_def.name)
-                    .map(|f| &f.float_def)
-            }) {
-                // Interpret raw bits as float according to the definition
-                let float_value: Option<f64> = match float_def {
-                    can_dbc::SignalExtendedValueType::IEEEfloat32Bit => {
-                        if signal_def.size != 32 {
-                            log::warn!(
-                                "Signal {} marked as f32 but size is {} bits",
-                                signal_def.name,
-                                signal_def.size
-                            );
-                            return None;
-                        }
-
-                        Some(f32::from_bits(raw_value as u32) as f64)
-                    }
-
-                    can_dbc::SignalExtendedValueType::IEEEdouble64bit => {
-                        if signal_def.size != 64 {
-                            log::warn!(
-                                "Signal {} marked as f64 but size is {} bits",
-                                signal_def.name,
-                                signal_def.size
-                            );
-                            return None;
-                        }
-
-                        Some(f64::from_bits(raw_value))
-                    }
-
-                    _ => {
-                        unreachable!(
-                            "SignedOrUnsignedInteger should be filtered out when loading float defs"
-                        )
-                    }
-                };
-                if let Some(float_value) = float_value {
-                    let scaled_value = float_value * signal_def.factor + signal_def.offset;
-                    return Some(DecodedSignal {
-                        name: signal_def.name.clone(),
-                        value: DecodedSignalValue::Numeric(scaled_value),
-                        unit: signal_def.unit.clone(),
-                    });
-                }
+            .and_then(|entry| entry.format_defs.get(&signal_def.name));
+        if let Some(format_def) = format_def {
+            if let Some(enum_str) = format_def.enum_map.get(&raw_value_with_sign) {
+                return Some(DecodedSignal {
+                    name: signal_def.name.clone(),
+                    value: DecodedSignalValue::Enum(raw_value_with_sign, enum_str.clone()),
+                    unit: signal_def.unit.clone(),
+                });
+            } else {
+                log::warn!(
+                    "Raw value {} for signal '{}' in message ID {:#X} does not have a corresponding enum label. \
+                    Returning raw value as numeric.",
+                    raw_value_with_sign,
+                    signal_def.name,
+                    msg_id
+                );
             }
+        }
 
-            // Apply scaling
-            let scaled_value = raw_value_with_sign as f64 * signal_def.factor + signal_def.offset;
-
-            Some(DecodedSignal {
+        // Check for float definition
+        let float_def = self
+            .msg_entries
+            .get(&msg_id)
+            .and_then(|entry| entry.format_defs.get(&signal_def.name))
+            .and_then(|format_def| format_def.float_format);
+        if let Some(float_format) = float_def {
+            // Note: signal sizes are validated when loading the DBC, so we can assume 32 bits for f32 and 64 bits for f64
+            let float_value = match float_format {
+                FloatFormat::F32 => f32::from_bits(raw_value as u32) as f64,
+                FloatFormat::F64 => f64::from_bits(raw_value),
+            };
+            let scaled_value = float_value * signal_def.factor + signal_def.offset;
+            return Some(DecodedSignal {
                 name: signal_def.name.clone(),
                 value: DecodedSignalValue::Numeric(scaled_value),
                 unit: signal_def.unit.clone(),
-            })
+            });
         }
+
+        // Not enum or float, signed/unsigned integer
+        let scaled_value = raw_value_with_sign as f64 * signal_def.factor + signal_def.offset;
+        Some(DecodedSignal {
+            name: signal_def.name.clone(),
+            value: DecodedSignalValue::Numeric(scaled_value),
+            unit: signal_def.unit.clone(),
+        })
     }
 
     /// Extracts raw signal bits from CAN data.
@@ -709,19 +766,19 @@ impl Parser {
         msg_id: u32,
         signal_values: &std::collections::HashMap<String, f64>,
     ) -> Option<Vec<u8>> {
-        let msg_def = self.msg_defs.get(&msg_id)?;
+        let msg_entry = self.msg_entries.get(&msg_id)?;
 
-        let msg_size = msg_def.size as usize;
+        let msg_size = msg_entry.msg_def.size as usize;
         let mut data = vec![0u8; msg_size];
 
-        for signal_def in &msg_def.signals {
+        for signal_def in &msg_entry.msg_def.signals {
             let physical_value = match signal_values.get(&signal_def.name) {
                 Some(&v) => v,
                 _ => {
                     log::error!(
                         "Signal {} not provided for message {} during encoding",
                         signal_def.name,
-                        msg_def.name
+                        msg_entry.msg_def.name
                     );
                     return None;
                 }
@@ -735,7 +792,7 @@ impl Parser {
                 log::error!(
                     "Failed to encode signal {} for message {}",
                     signal_def.name,
-                    msg_def.name
+                    msg_entry.msg_def.name
                 );
                 return None;
             }
@@ -785,10 +842,10 @@ impl Parser {
         msg_name: &str,
         signal_values: &std::collections::HashMap<String, f64>,
     ) -> Option<(u32, Vec<u8>)> {
-        let (msg_id, _msg_def) = self
-            .msg_defs
+        let (msg_id, _msg_entry) = self
+            .msg_entries
             .iter()
-            .find(|(_id, msg)| msg.name == msg_name)?;
+            .find(|(_id, entry)| entry.msg_def.name == msg_name)?;
 
         let data = self.encode_msg(*msg_id, signal_values)?;
         Some((*msg_id, data))
@@ -805,63 +862,33 @@ impl Parser {
         physical_value: f64,
         data: &mut [u8],
     ) -> Option<()> {
-        if let Some(float_def) = self.float_defs.get(&msg_id).and_then(|floats| {
-            floats
-                .iter()
-                .find(|f| f.signal_name == signal_def.name)
-                .map(|f| &f.float_def)
-        }) {
-            let raw_int = match float_def {
-                can_dbc::SignalExtendedValueType::IEEEfloat32Bit => {
-                    if signal_def.size != 32 {
-                        log::warn!(
-                            "Signal {} marked as f32 but size is {} bits",
-                            signal_def.name,
-                            signal_def.size
-                        );
-                        return None;
-                    }
+        let scaled_value = (physical_value - signal_def.offset) / signal_def.factor;
 
-                    (physical_value as f32).to_bits() as u64
-                }
-
-                can_dbc::SignalExtendedValueType::IEEEdouble64bit => {
-                    if signal_def.size != 64 {
-                        log::warn!(
-                            "Signal {} marked as f64 but size is {} bits",
-                            signal_def.name,
-                            signal_def.size
-                        );
-                        return None;
-                    }
-
-                    physical_value.to_bits()
-                }
-
-                _ => {
-                    unreachable!(
-                        "SignedOrUnsignedInteger should be filtered out when loading float defs"
-                    )
-                }
+        let float_def = self
+            .msg_entries
+            .get(&msg_id)
+            .and_then(|entry| entry.format_defs.get(&signal_def.name))
+            .and_then(|format_def| format_def.float_format);
+        if let Some(float_format) = float_def {
+            // Note: signal sizes are validated when loading the DBC, so we can assume 32 bits for f32 and 64 bits for f64
+            let float_data = match float_format {
+                FloatFormat::F32 => (scaled_value as f32).to_bits() as u64,
+                FloatFormat::F64 => scaled_value.to_bits(),
             };
-
             return self.insert_signal_value(
                 data,
                 signal_def.start_bit as usize,
                 signal_def.size as usize,
                 signal_def.byte_order,
-                raw_int,
+                float_data,
             );
         }
-
-        // Apply inverse scaling: raw = (physical - offset) / factor
-        let raw_value = (physical_value - signal_def.offset) / signal_def.factor;
 
         // Convert to integer and handle signed/unsigned
         let raw_int = if signal_def.value_type == can_dbc::ValueType::Signed {
             // Convert signed physical value to the integer representation
             // then to the unsigned bit pattern (two's complement).
-            let signed_val = raw_value.round() as i64;
+            let signed_val = scaled_value.round() as i64;
             // For an N-bit signed value the allowed signed range is
             // -(1 << (N-1)) .. (1 << (N-1)) - 1
             let max_value = (1i64 << (signal_def.size - 1)) - 1;
@@ -879,7 +906,7 @@ impl Parser {
             }
         } else {
             // Unsigned value
-            let unsigned_val = raw_value.round() as u64;
+            let unsigned_val = scaled_value.round() as u64;
             let max_value = low_bits_mask!(signal_def.size as usize, u64);
 
             // Clamp to valid range
@@ -1001,8 +1028,8 @@ impl Parser {
     /// # }
     /// ```
     pub fn signal_defs(&self, msg_id: u32) -> Option<Vec<can_dbc::Signal>> {
-        let msg_def = self.msg_defs.get(&msg_id)?;
-        Some(msg_def.signals.to_vec())
+        let msg_entry = self.msg_entries.get(&msg_id)?;
+        Some(msg_entry.msg_def.signals.clone())
     }
 
     /// Returns all loaded message definitions.
@@ -1032,7 +1059,10 @@ impl Parser {
     /// # }
     /// ```
     pub fn msg_defs(&self) -> Vec<can_dbc::Message> {
-        self.msg_defs.values().cloned().collect()
+        self.msg_entries
+            .values()
+            .map(|entry| entry.msg_def.clone())
+            .collect()
     }
 
     /// Returns the message definition for a given message ID.
@@ -1062,7 +1092,7 @@ impl Parser {
     /// # }
     ///
     pub fn msg_def(&self, msg_id: u32) -> Option<&can_dbc::Message> {
-        self.msg_defs.get(&msg_id)
+        self.msg_entries.get(&msg_id).map(|entry| &entry.msg_def)
     }
 
     /// Clears all loaded message definitions.
@@ -1079,9 +1109,7 @@ impl Parser {
     /// parser.clear();
     /// ```
     pub fn clear(&mut self) {
-        self.msg_defs.clear();
-        self.enum_defs.clear();
-        self.float_defs.clear();
+        self.msg_entries.clear();
     }
 }
 
