@@ -66,6 +66,8 @@
 //! # }
 //! ```
 
+pub use can_dbc;
+
 /// Creates a bitmask with the lowest N bits set to 1.
 ///
 /// This macro generates a mask value of the specified type with the lower `bits` bits set to 1
