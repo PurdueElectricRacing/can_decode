@@ -524,11 +524,21 @@ impl Parser {
             match comment {
                 can_dbc::Comment::Message { id, comment } => {
                     let msg_id = id.raw();
-                    if let Some(msg_entry) = self.msg_entries.get_mut(&msg_id) {
-                        msg_entry.msg_desc = Some(comment);
-                    } else {
+
+                    let Some(msg_entry) = self.msg_entries.get_mut(&msg_id) else {
                         log::warn!("Comment for unknown message ID {:#X}. Skipping.", msg_id);
+                        continue;
+                    };
+
+                    if msg_entry.msg_desc.is_some() {
+                        log::warn!(
+                            "Duplicate comment for message ID {:#X}. \
+                            Overwriting existing message comment.",
+                            msg_id
+                        );
                     }
+
+                    msg_entry.msg_desc = Some(comment);
                 }
                 can_dbc::Comment::Signal {
                     message_id,
