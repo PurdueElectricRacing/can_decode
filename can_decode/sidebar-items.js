@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["DecodedSignalValue"],"struct":["DecodedMessage","DecodedSignal","EnumDef","FloatDef","Parser"],"type":["SignalMap"]};
+window.SIDEBAR_ITEMS = {"enum":["DecodedSignalValue","FloatFormat"],"struct":["DecodedMessage","DecodedSignal","FormatDef","MsgEntry","Parser"],"type":["SignalMap"]};
