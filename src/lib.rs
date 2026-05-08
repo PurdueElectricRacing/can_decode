@@ -1247,10 +1247,10 @@ impl Parser {
     ///
     /// A reference to the message comment if present, or `None` if the message
     /// is unknown or has no DBC comment.
-    pub fn msg_desc(&self, msg_id: u32) -> Option<&String> {
+    pub fn msg_desc(&self, msg_id: u32) -> Option<&str> {
         self.msg_entries
             .get(&msg_id)
-            .and_then(|entry| entry.msg_desc.as_ref())
+            .and_then(|entry| entry.msg_desc.as_deref())
     }
 
     /// Returns the signal-level description/comment for a signal within a message.
@@ -1259,11 +1259,11 @@ impl Parser {
     ///
     /// A reference to the signal comment if present, or `None` if the message,
     /// signal, or comment is not available.
-    pub fn signal_desc(&self, msg_id: u32, signal_name: &str) -> Option<&String> {
+    pub fn signal_desc(&self, msg_id: u32, signal_name: &str) -> Option<&str> {
         self.msg_entries
             .get(&msg_id)
             .and_then(|entry| entry.signal_meta.get(signal_name))
-            .and_then(|meta| meta.sig_comment.as_ref())
+            .and_then(|meta| meta.sig_comment.as_deref())
     }
 
     /// Returns all loaded can_dbc message definitions.
