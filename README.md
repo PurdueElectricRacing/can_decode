@@ -75,5 +75,5 @@ Add the following to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-can_decode = "0.7.0"
+can_decode = "0.7.1"
 ```
