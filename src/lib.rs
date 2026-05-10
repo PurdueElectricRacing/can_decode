@@ -737,7 +737,7 @@ impl Parser {
                     ),
                     unit: signal_def.unit.clone(),
                 });
-            } else {
+            } else if !format_def.enum_map.is_empty() {
                 log::warn!(
                     "Raw value {} for signal '{}' in message ID {:#X} does not have a corresponding enum label. \
                     Returning raw value as numeric.",
